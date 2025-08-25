@@ -1,0 +1,58 @@
+version: "3.8"
+
+services:
+  ai-legal-assistant:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist the vector database cache
+      - ./chroma_db:/app/chroma_db
+      # Optional: mount logs
+      - ./logs:/app/logs
+    environment:
+      # OpenAI Configuration
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+
+      # AWS Configuration
+      - USE_AWS_S3=true
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - AWS_S3_BUCKET=${AWS_S3_BUCKET}
+      - AWS_S3_PREFIX=${AWS_S3_PREFIX:-legal-documents/}
+
+      # Application Configuration
+      - CHROMA_PERSIST_DIR=/app/chroma_db
+      - ENVIRONMENT=production
+
+      # Optional: Use AWS OpenSearch for vector storage
+      - USE_OPENSEARCH=${USE_OPENSEARCH:-false}
+      - OPENSEARCH_ENDPOINT=${OPENSEARCH_ENDPOINT}
+
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  # Optional: Redis for caching (recommended for production)
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+volumes:
+  redis_data:

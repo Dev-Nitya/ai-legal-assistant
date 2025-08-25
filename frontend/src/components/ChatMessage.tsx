@@ -1,0 +1,115 @@
+import React from "react";
+import { User, Bot, Clock, CheckCircle, AlertCircle } from "lucide-react";
+import type { Message } from "../types";
+
+interface ChatMessageProps {
+  message: Message;
+}
+
+const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
+  const isUser = message.sender === "user";
+
+  return (
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-6`}>
+      <div
+        className={`flex max-w-[80%] ${
+          isUser ? "flex-row-reverse" : "flex-row"
+        }`}
+      >
+        {/* Avatar */}
+        <div className={`flex-shrink-0 ${isUser ? "ml-3" : "mr-3"}`}>
+          <div
+            className={`w-8 h-8 rounded-full flex items-center justify-center ${
+              isUser
+                ? "bg-gradient-to-r from-amber-400 to-amber-600"
+                : "bg-gradient-to-r from-blue-500 to-blue-600"
+            }`}
+          >
+            {isUser ? (
+              <User className="w-4 h-4 text-white" />
+            ) : (
+              <Bot className="w-4 h-4 text-white" />
+            )}
+          </div>
+        </div>
+
+        {/* Message Content */}
+        <div
+          className={`rounded-2xl px-4 py-3 ${
+            isUser
+              ? "bg-gradient-to-r from-amber-500 to-amber-600 text-white"
+              : "bg-white border border-gray-200 text-gray-800 shadow-sm"
+          }`}
+        >
+          {/* Message Text */}
+          <div className={`${isUser ? "text-white" : "text-gray-800"}`}>
+            {isUser ? (
+              // User messages as plain text
+              <p className="whitespace-pre-wrap">{message.content}</p>
+            ) : (
+              // Assistant messages as HTML
+              <div
+                className="prose prose-sm max-w-none prose-headings:text-gray-800 prose-p:text-gray-800 prose-strong:text-gray-900 prose-em:text-gray-700 prose-ul:text-gray-800 prose-ol:text-gray-800 prose-blockquote:text-gray-700 prose-blockquote:border-amber-500"
+                dangerouslySetInnerHTML={{ __html: message.content }}
+              />
+            )}
+          </div>
+
+          {/* Message Metadata */}
+          {!isUser && (
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              {/* Confidence Score */}
+              {message.confidence && (
+                <div className="flex items-center text-xs text-gray-500 mb-2">
+                  {message.confidence >= 0.8 ? (
+                    <CheckCircle className="w-3 h-3 text-green-500 mr-1" />
+                  ) : (
+                    <AlertCircle className="w-3 h-3 text-amber-500 mr-1" />
+                  )}
+                  <span>
+                    Confidence: {Math.round(message.confidence * 100)}%
+                  </span>
+                </div>
+              )}
+
+              {/* Sources */}
+              {message.sources && message.sources.length > 0 && (
+                <div className="mb-2">
+                  <p className="text-xs font-medium text-gray-600 mb-1">
+                    Sources:
+                  </p>
+                  <div className="flex flex-wrap gap-1">
+                    {message.sources.map((source, index) => (
+                      <span
+                        key={index}
+                        className="inline-block px-2 py-1 bg-amber-100 text-amber-800 text-xs rounded-full"
+                      >
+                        {source}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Timestamp */}
+              <div className="flex items-center text-xs text-gray-400">
+                <Clock className="w-3 h-3 mr-1" />
+                <span>{message.timestamp.toLocaleTimeString()}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Error State */}
+          {message.isError && (
+            <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
+              <AlertCircle className="w-4 h-4 inline mr-1" />
+              Error processing your request
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default ChatMessage;

@@ -1,0 +1,7 @@
+.env
+.venv/
+__pycache__/
+scripts/.env.aws
+cache/
+chroma_db/
+documents/

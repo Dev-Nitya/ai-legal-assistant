@@ -1,0 +1,77 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.vim/
+
+# Git
+.git/
+.gitignore
+
+# Documentation (usually not needed in container)
+README.md
+docs/
+*.md
+
+# Local development data
+chroma_db/
+logs/
+.env.local
+.env.development
+.env.test
+
+# OS generated
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Development tools
+docker-compose.yml
+docker-compose.*.yml
+.dockerignore
+
+# Test files
+tests/
+test_*
+*_test.py
+pytest.ini
+.pytest_cache/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Local configuration
+.env.example
+config.local.*
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+.cache/
+
+# Node.js (if you have any frontend build tools)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
