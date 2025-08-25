@@ -5,7 +5,7 @@ Parameters:
   BucketName:
     Type: String
     Description: S3 bucket name for legal documents
-    Default: ai-legal-assistant-documents
+    Default: ai-legal-assistant-documents-global
   
   Environment:
     Type: String
@@ -13,9 +13,11 @@ Parameters:
     AllowedValues: [development, staging, production]
 
 Resources:
-  # S3 Bucket for Documents
+  # S3 Bucket for Documents (persistent across deployments)
   DocumentsBucket:
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain # Retain bucket on stack deletion
+    UpdateReplacePolicy: Retain # Retain bucket on stack update
     Properties:
       BucketName: !Sub "${BucketName}-${Environment}-${AWS::AccountId}"
       VersioningConfiguration:
@@ -31,6 +33,16 @@ Resources:
             Status: Enabled
             AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 7
+          - Id: TransitionOldVersions
+            Status: Enabled
+            NoncurrentVersionTransitions:
+              - TransitionInDays: 30
+                StorageClass: STANDARD_IA
+              - TransitionInDays: 90
+                StorageClass: GLACIER
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true  # Enable for document upload notifications
   
   # IAM Role for Application
   ApplicationRole:
@@ -63,6 +75,8 @@ Resources:
               - s3:GetObjectVersion
               - s3:ListBucket
               - s3:ListBucketVersions
+              - s3:PutObject
+              - s3:DeleteObject
             Resource:
               - !GetAtt DocumentsBucket.Arn
               - !Sub "${DocumentsBucket.Arn}/*"
