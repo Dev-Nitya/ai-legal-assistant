@@ -70,7 +70,6 @@ Resources:
   # ECS Cluster
   ECSCluster:
     Type: AWS::ECS::Cluster
-    DependsOn: ECSServiceLinkedRole
     Properties:
       ClusterName: !Sub "ai-legal-assistant-${Environment}"
       ClusterSettings:
