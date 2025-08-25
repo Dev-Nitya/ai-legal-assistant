@@ -67,14 +67,21 @@ Resources:
       Roles:
         - !Ref ApplicationRole
 
+  ECSServiceLinkedRole:
+    Type: AWS::IAM::ServiceLinkedRole
+    Properties:
+      AWSServiceName: ecs.amazonaws.com
+      Description: "Service linked role for ECS"
+
   # ECS Cluster
   ECSCluster:
     Type: AWS::ECS::Cluster
+    DependsOn: ECSServiceLinkedRole
     Properties:
       ClusterName: !Sub "ai-legal-assistant-${Environment}"
-      CapacityProviders:
-        - FARGATE
-        - FARGATE_SPOT
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
 
   # CloudWatch Log Group
   LogGroup:
@@ -101,3 +108,9 @@ Outputs:
     Value: !Ref ECSCluster
     Export:
       Name: !Sub "${AWS::StackName}-ECSClusterName"
+
+  ECSClusterArn:
+    Description: ECS cluster ARN
+    Value: !GetAtt ECSCluster.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-ECSClusterArn"
