@@ -36,7 +36,7 @@ Resources:
   ApplicationRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "ai-legal-assistant-role-${Environment}"
+      RoleName: !Sub "ai-legal-assistant-role-${Environment}-${AWS::AccountId}"
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -60,10 +60,12 @@ Resources:
           - Effect: Allow
             Action:
               - s3:GetObject
+              - s3:GetObjectVersion
               - s3:ListBucket
+              - s3:ListBucketVersions
             Resource:
-              - !Sub "${DocumentsBucket}/*"
               - !GetAtt DocumentsBucket.Arn
+              - !Sub "${DocumentsBucket.Arn}/*"
       Roles:
         - !Ref ApplicationRole
 
@@ -71,7 +73,7 @@ Resources:
   ECSCluster:
     Type: AWS::ECS::Cluster
     Properties:
-      ClusterName: !Sub "ai-legal-assistant-${Environment}"
+      ClusterName: !Sub "ai-legal-assistant-${Environment}-${AWS::AccountId}"
       ClusterSettings:
         - Name: containerInsights
           Value: enabled
@@ -80,7 +82,7 @@ Resources:
   LogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub "/aws/ecs/ai-legal-assistant-${Environment}"
+      LogGroupName: !Sub "/aws/ecs/ai-legal-assistant-${Environment}-${AWS::AccountId}"
       RetentionInDays: 30
 
 Outputs:
