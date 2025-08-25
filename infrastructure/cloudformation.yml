@@ -67,12 +67,6 @@ Resources:
       Roles:
         - !Ref ApplicationRole
 
-  ECSServiceLinkedRole:
-    Type: AWS::IAM::ServiceLinkedRole
-    Properties:
-      AWSServiceName: ecs.amazonaws.com
-      Description: "Service linked role for ECS"
-
   # ECS Cluster
   ECSCluster:
     Type: AWS::ECS::Cluster
