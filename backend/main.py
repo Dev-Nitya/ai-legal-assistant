@@ -1,16 +1,17 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-import json
 import logging
 import time
 import os
 from datetime import datetime
 
+load_dotenv()
+
 from routes.health import router as health_router
 from routes.enhanced_chat import router as enhanced_chat_router
-
-load_dotenv()
+from config.settings import settings
+from middleware.rate_limit_middleware import RateLimitMiddleware
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,8 +19,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Load environment variables
-load_dotenv()
+os.environ["OPENAI_API_KEY"] = settings.openai_api_key
+if settings.langsmith_api_key:
+    os.environ["LANGSMITH_API_KEY"] = settings.langsmith_api_key
+    os.environ["LANGSMITH_TRACING"] = "true"
+    os.environ["LANGSMITH_PROJECT"] = f"ai-legal-assistant-{settings.environment}"
 
 app = FastAPI(
     title="AI Legal Assistant",
@@ -27,6 +31,23 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs" if os.getenv("ENVIRONMENT") != "production" else None,
     redoc_url="/redoc" if os.getenv("ENVIRONMENT") != "production" else None)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+     allow_origins=["*"] if os.getenv("ENVIRONMENT") == "development" else [
+        "https://yourdomain.com",
+        "https://www.yourdomain.com"
+    ],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["*"],  # Allow all headers
+)
+
+app.add_middleware(
+    RateLimitMiddleware,
+    skip_paths=["/docs", "/redoc", "/openapi.json", "/health/live"]  # Skip docs and basic health
+)
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -42,18 +63,6 @@ async def log_requests(request: Request, call_next):
     logger.info(f"✅ {response.status_code} - {process_time:.4f}s")
     
     return response
-
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-     allow_origins=["*"] if os.getenv("ENVIRONMENT") == "development" else [
-        "https://yourdomain.com",
-        "https://www.yourdomain.com"
-    ],
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["*"],  # Allow all headers
-)
 
 app.include_router(health_router)
 app.include_router(enhanced_chat_router, prefix="/api")

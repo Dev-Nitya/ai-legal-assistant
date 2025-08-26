@@ -9,11 +9,8 @@ from langchain_community.document_loaders import PyPDFLoader, DirectoryLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
-from dotenv import load_dotenv
 
 from chain.utils import metadata_utils
-
-load_dotenv()
 
 # Configuration
 DOCUMENTS_DIR = os.getenv("DOCUMENTS_DIR", "/app/documents")

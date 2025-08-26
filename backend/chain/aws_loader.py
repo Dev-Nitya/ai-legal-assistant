@@ -10,19 +10,17 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
 from botocore.exceptions import ClientError, NoCredentialsError
-from dotenv import load_dotenv
 import tempfile
 
 from chain.utils import metadata_utils
-
-load_dotenv()
+from config.settings import settings
 
 class AWSDocumentsLoader:
     def __init__(self):
-        self.s3_bucket = os.getenv("AWS_S3_BUCKET")
-        self.s3_prefix = os.getenv("AWS_S3_PREFIX", "legal-documents/")
-        self.aws_region = os.getenv("AWS_REGION", "us-east-1")
-        self.chroma_persist_dir = os.getenv("CHROMA_PERSIST_DIR", "/app/chroma_db")
+        self.s3_bucket = settings.aws_s3_bucket
+        self.s3_prefix = settings.aws_s3_prefix
+        self.aws_region = settings.aws_region
+        self.chroma_persist_dir = settings.chroma_persist_dir
         self.cache_file = os.path.join(self.chroma_persist_dir, "aws_document_cache.json")
 
         # Initialize AWS clients

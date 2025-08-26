@@ -2,9 +2,6 @@ import os
 from langchain.schema import Document
 from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
-from dotenv import load_dotenv
-
-load_dotenv()
 
 # Determine if we should use AWS or local loading
 USE_AWS = os.getenv("USE_AWS_S3", "false").lower() == "true"

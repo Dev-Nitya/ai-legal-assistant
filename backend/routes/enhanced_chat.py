@@ -6,13 +6,14 @@ from langchain.agents import create_openai_tools_agent, AgentExecutor
 from langchain_core.prompts import ChatPromptTemplate
 from typing import Optional, List, Dict, Any
 import time
-from dotenv import load_dotenv
+import logging
 
 from chain.loader import vectorstore
 from chain.retriever import enhanced_retriever, query_processor, QueryProcessor
 from tools.tool import ALL_TOOLS
+from redis_cache.redis_cache import cache
 
-load_dotenv()
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -74,31 +75,51 @@ async def enhanced_chat(request: EnhancedChatRequest):
     start_time = time.time()
 
     try:
-        # Step 1: Process and analyze query
+        # Step 1: Check cache first
+        cache_key = f"{request.question}_{request.complexity_level}_{str(request.filters)}"
+        cached_response = cache.get_cached_query(cache_key)
+
+        if cached_response:
+            logger.info(f"Cache hit for query: {request.question}")
+            cached_response["response_time_ms"] = int((time.time() - start_time) * 1000)
+            cached_response["from_cache"] = True
+            return EnhancedChatResponse(**cached_response)
+
+        # Step 2: Process and analyze query
         query_analysis = query_processor.preprocess_query(request.question)
         print(f"Query Analysis: {query_analysis}")
 
-        # Step 2: Enhanced retrieval
-        if request.use_hybrid_search and enhanced_retriever:
-            # Use hybrid retriever with filters
-            filters = request.filters or query_analysis.get('filters', {})
-            relevant_docs = enhanced_retriever.retrieve_with_filters(
-                query=request.question,
-                filters=filters,
-                k=5
-            )
+        # Step 3: Check cached vector search
+        cached_vectors = cache.get_cached_vector_search(request.question, request.filters or {})
+        if cached_vectors:
+            relevant_docs = cached_vectors
+            logger.info("📚 Using cached vector search results")
         else:
-            # Fallback to basic retrieval
-            retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-            relevant_docs = retriever.get_relevant_documents(request.question)
+            # Step 4: Enhanced retrieval
+            if request.use_hybrid_search and enhanced_retriever:
+                # Use hybrid retriever with filters
+                filters = request.filters or query_analysis.get('filters', {})
+                relevant_docs = enhanced_retriever.retrieve_with_filters(
+                    query=request.question,
+                    filters=filters,
+                    k=5
+                )
+            else:
+                # Fallback to basic retrieval
+                retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+                relevant_docs = retriever.get_relevant_documents(request.question)
 
-        # Step 3: Calculate confidence based on retrieval quality
+            # Cache vector search results
+            doc_dicts = [{"content": doc.page_content, "metadata": doc.metadata} for doc in relevant_docs]
+            cache.cache_vector_search(request.question, request.filters or {}, doc_dicts)
+
+        # Step 5: Calculate confidence based on retrieval quality
         confidence = calculate_confidence(relevant_docs, query_analysis)
 
-        # Step 4: Prepare context for LLM
+        # Step 6: Prepare context for LLM
         context = format_context(relevant_docs)
 
-        # Step 5: Use LLM to generate answer
+        # Step 7: Use LLM to generate answer
         llm = ChatOpenAI(temperature=0, model="gpt-4o-mini")
 
         if request.use_tools and confidence < 0.7:
@@ -148,7 +169,7 @@ async def enhanced_chat(request: EnhancedChatRequest):
             answer = response.content
             tools_used = []
 
-        # Step 6: Format response
+        # Step 8: Format response
         response_time = int((time.time() - start_time) * 1000)
         
         # Extract citations from documents
@@ -171,24 +192,28 @@ async def enhanced_chat(request: EnhancedChatRequest):
                 })
                 seen_sources.add(source_name)
 
-        retrieval_stats = {
-            "documents_retrieved": len(relevant_docs),
-            "unique_sources": len(set(doc.metadata.get('source_file') for doc in relevant_docs)),
-            "average_relevance": confidence,
-            "hybrid_search_used": request.use_hybrid_search and enhanced_retriever is not None
+        response_data = {
+            "answer": answer,
+            "source_documents": formatted_sources,
+            "confidence": confidence,
+            "tools_used": tools_used,
+            "citations": citations,
+            "reading_level": request.complexity_level,
+            "response_time_ms": response_time,
+            "query_analysis": query_analysis,
+            "retrieval_stats": {
+                "documents_retrieved": len(relevant_docs),
+                "unique_sources": len(set(doc.metadata.get('source_file') for doc in relevant_docs)),
+                "average_relevance": confidence,
+                "hybrid_search_used": request.use_hybrid_search and enhanced_retriever is not None
+            },
+            "from_cache": False
         }
 
-        return EnhancedChatResponse(
-            answer=answer,
-            source_documents=formatted_sources,
-            confidence=confidence,
-            tools_used=tools_used,
-            citations=citations,
-            reading_level=request.complexity_level,
-            response_time_ms=response_time,
-            query_analysis=query_analysis,
-            retrieval_stats=retrieval_stats
-        )
+        # cache the response for future use
+        cache.cache_query_response(cache_key, response_data, ttl=1800)
+        return EnhancedChatResponse(**response_data)
+    
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
