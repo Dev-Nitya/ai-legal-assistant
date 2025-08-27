@@ -28,6 +28,9 @@ class Settings:
         # Cache Configuration
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
         self.cache_ttl_seconds = int(os.getenv("CACHE_TTL_SECONDS", "1800"))  # 30 minutes
+        self.redis_host = os.getenv("REDIS_HOST", "localhost")
+        self.redis_port = int(os.getenv("REDIS_PORT", "6379"))
+        self.redis_password = os.getenv("REDIS_PASSWORD", None)
 
         # Application Configuration
         self.chroma_persist_dir = os.getenv("CHROMA_PERSIST_DIR", "/app/chroma_db")

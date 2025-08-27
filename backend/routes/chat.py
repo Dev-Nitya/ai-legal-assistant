@@ -9,11 +9,13 @@ from typing import Optional, List, Dict, Any
 
 from chain.loader import vectorstore
 from tools.tool import ALL_TOOLS
+from services.cost_tracking_callback_service import CostTrackingCallback
 
 router = APIRouter()
 
 class ChatRequest(BaseModel):
     question: str
+    user_id: str 
     session_id: str = "default"
     use_tools: bool = True
     complexity_level: str = "simple"  # simple, intermediate, advanced
@@ -66,10 +68,14 @@ async def chat(request: ChatRequest):
                 tools=ALL_TOOLS,
                 prompt=prompt,
             )
+            # Create callback
+            cost_callback = CostTrackingCallback(user_id=request.user_id)
+            
             agent_executor = AgentExecutor(
                 agent=agent,
                 tools=ALL_TOOLS,
                 verbose=True,
+                callbacks=[cost_callback]
             )
             result = agent_executor.invoke({
                 "input": request.question,

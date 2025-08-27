@@ -12,6 +12,9 @@ from routes.health import router as health_router
 from routes.enhanced_chat import router as enhanced_chat_router
 from config.settings import settings
 from middleware.rate_limit_middleware import RateLimitMiddleware
+from middleware.request_size_middleware import RequestSizeMiddleware
+from middleware.request_timeout_middleware import TimeoutProtectionMiddleware
+from middleware.cost_monitoring_middleware import CostMonitoringMiddleware
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,9 +48,16 @@ app.add_middleware(
 )
 
 app.add_middleware(
+    RequestSizeMiddleware,
+    max_content_kb=100,  # 100KB max content
+    max_headers_kb=10    # 10KB max headers
+)
+app.add_middleware(TimeoutProtectionMiddleware, timeout_seconds=30)
+app.add_middleware(
     RateLimitMiddleware,
     skip_paths=["/docs", "/redoc", "/openapi.json", "/health/live"]  # Skip docs and basic health
 )
+app.add_middleware(CostMonitoringMiddleware)
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):

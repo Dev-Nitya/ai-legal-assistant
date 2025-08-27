@@ -1,40 +1,23 @@
-from pydantic import BaseModel
-from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException, Request
 from langchain_openai import ChatOpenAI
-from langchain.chains.retrieval_qa.base import RetrievalQA
 from langchain.agents import create_openai_tools_agent, AgentExecutor
 from langchain_core.prompts import ChatPromptTemplate
-from typing import Optional, List, Dict, Any
+from typing import List, Dict
 import time
 import logging
 
+from backend.schemas.chat import EnhancedChatRequest, EnhancedChatResponse
+from backend.schemas.errors import ValidationErrorResponse
 from chain.loader import vectorstore
-from chain.retriever import enhanced_retriever, query_processor, QueryProcessor
+from chain.retriever import enhanced_retriever, query_processor
 from tools.tool import ALL_TOOLS
 from redis_cache.redis_cache import cache
+from services.cost_tracking_callback_service import CostTrackingCallback
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-class EnhancedChatRequest(BaseModel):
-    question: str
-    session_id: str = "default"
-    use_tools: bool = True
-    complexity_level: str = "simple"
-    filters: Optional[Dict] = None
-    use_hybrid_search: bool = True
-
-class EnhancedChatResponse(BaseModel):
-    answer: str
-    source_documents: List[Dict]
-    confidence: float
-    tools_used: Optional[List[str]] = None
-    citations: Optional[List[Dict]] = None
-    reading_level: str = "simple"
-    response_time_ms: int
-    query_analysis: Dict
-    retrieval_stats: Dict
 
 ENHANCED_LEGAL_PROMPT = """You are an expert AI Legal Assistant specializing in Indian law. Your role is to:
 
@@ -135,10 +118,14 @@ async def enhanced_chat(request: EnhancedChatRequest):
                 tools=ALL_TOOLS,
                 prompt=prompt,
             )
+
+            cost_callback = CostTrackingCallback(user_id=request.user_id)
+     
             agent_executor = AgentExecutor(
                 agent=agent,
                 tools=ALL_TOOLS,
                 verbose=True,
+                callbacks=[cost_callback]
             )
             result = agent_executor.invoke({
                 "input": request.question,
@@ -214,8 +201,38 @@ async def enhanced_chat(request: EnhancedChatRequest):
         cache.cache_query_response(cache_key, response_data, ttl=1800)
         return EnhancedChatResponse(**response_data)
     
+    except ValueError as e:
+        # Pydantic validation errors
+        logger.warning(f"Validation error: {e}")
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error_code": "VALIDATION_ERROR",
+                "error_message": str(e)
+            }
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Enhanced chat error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error_code": "INTERNAL_ERROR",
+                "error_message": "An internal error occurred"
+            }
+        )
+    
+@router.exception_handler(422)
+async def validation_exception_handler(request: Request, exc):
+    """Handle validation errors with structured response."""
+    logger.warning(f"Validation error on {request.url.path}: {exc}")
+    
+    return JSONResponse(
+        status_code=422,
+        content=ValidationErrorResponse(
+            error_message="Request validation failed",
+            details={"validation_errors": exc.detail if hasattr(exc, 'detail') else str(exc)}
+        ).dict()
+    )
 
 def calculate_confidence(docs: List, query_analysis: Dict) -> float:
     """Calculate confidence score based on retrieval quality"""
