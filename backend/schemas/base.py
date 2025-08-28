@@ -45,7 +45,7 @@ class BaseRequestModel(BaseModel):
     request_id: Optional[str] = Field(
         None,
         description="Optional request tracking ID for debugging and correlation",
-        regex=r"^[a-zA-Z0-9\-_]{1,50}$"
+        pattern=r"^[a-zA-Z0-9\-_]{1,50}$"
     )
 
     class Config:

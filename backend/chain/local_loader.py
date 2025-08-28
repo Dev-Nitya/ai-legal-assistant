@@ -172,7 +172,7 @@ def create_vector_store(docs: List[Document]):
         return vector_store, docs
     
     except Exception as e:
-        print(f"Error creating vector store: {e}")
+        print(f"Error creating vector store in local loader: {e}")
         raise
 
 def get_or_create_vector_store():
@@ -205,22 +205,3 @@ def get_or_create_vector_store():
     vector_store, docs = create_vector_store(docs)
 
     return vector_store, docs
-
-# Initialize vector store
-try:
-    vectorstore, docs = get_or_create_vector_store()
-except Exception as e:
-    print(f"Error initializing vector store: {e}")
-     # Create fallback empty vector store
-    embeddings = OpenAIEmbeddings()
-    dummy_doc = Document(
-        page_content="Service temporarily unavailable. Please ensure documents are properly loaded.",
-        metadata={"source_file": "error", "document_type": "error"}
-    )
-    vectorstore = Chroma.from_documents(
-        documents=[dummy_doc],
-        embedding=embeddings,
-        persist_directory=CHROMA_PERSIST_DIR
-    )
-    docs = [dummy_doc]
-    print("Created fallback vector store")

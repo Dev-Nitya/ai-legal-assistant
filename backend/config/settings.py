@@ -1,8 +1,6 @@
 import os
 import logging
 
-from config.secrets import secrets_manager
-
 logger = logging.getLogger(__name__)
 
 class Settings:
@@ -13,8 +11,8 @@ class Settings:
 
          # Load secrets
         try:
-            self.openai_api_key = secrets_manager.get_openai_api_key()
-            self.langsmith_api_key = secrets_manager.get_langsmith_api_key()
+            self.openai_api_key = os.getenv("OPENAI_API_KEY", "default_openai_key")
+            self.langsmith_api_key = os.getenv("LANGSMITH_API_KEY", None)
             logger.info("✅ Secrets loaded successfully")
         except Exception as e:
             logger.error(f"❌ Failed to load secrets: {e}")
@@ -26,9 +24,9 @@ class Settings:
         self.aws_s3_prefix = os.getenv("AWS_S3_PREFIX", "legal-documents/")
         
         # Cache Configuration
-        self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+        self.redis_url = os.getenv("REDIS_URL", "127.0.0.1:6379")
         self.cache_ttl_seconds = int(os.getenv("CACHE_TTL_SECONDS", "1800"))  # 30 minutes
-        self.redis_host = os.getenv("REDIS_HOST", "localhost")
+        self.redis_host = os.getenv("REDIS_HOST", "127.0.0.1")
         self.redis_port = int(os.getenv("REDIS_PORT", "6379"))
         self.redis_password = os.getenv("REDIS_PASSWORD", None)
 
@@ -44,6 +42,8 @@ class Settings:
         # Rate Limiting
         self.rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
         self.rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
+
+        self.database_url = os.getenv("DATABASE_URL", "sqlite:///./users.db")
 
     def is_production(self) -> bool:
         return self.environment == "production"

@@ -130,10 +130,12 @@ def validate_request_size(content: str, max_size_kb: int = 100, content_size_kb:
     else:
         size_bytes = len(content.encode('utf-8'))
         size_kb = size_bytes / 1024
+
+    print(f"Request content size: {size_kb}KB (limit: {max_size_kb}KB)")
     
-    if size_kb > max_size_kb:
+    if int(size_kb) > int(max_size_kb):
         raise ValidationError(
-            f"Request content too large: {size_kb:.1f}KB exceeds {max_size_kb}KB limit"
+            f"Request content too large: {size_kb}KB exceeds {max_size_kb}KB limit"
         )
     
 def validate_request_headers_size(headers: dict, max_size_kb: int = 10) -> None:

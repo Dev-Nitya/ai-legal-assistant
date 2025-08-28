@@ -7,8 +7,8 @@ from typing import List, Dict
 import time
 import logging
 
-from backend.schemas.chat import EnhancedChatRequest, EnhancedChatResponse
-from backend.schemas.errors import ValidationErrorResponse
+from schemas.chat import EnhancedChatRequest, EnhancedChatResponse
+from schemas.errors import ValidationErrorResponse
 from chain.loader import vectorstore
 from chain.retriever import enhanced_retriever, query_processor
 from tools.tool import ALL_TOOLS
@@ -221,7 +221,6 @@ async def enhanced_chat(request: EnhancedChatRequest):
             }
         )
     
-@router.exception_handler(422)
 async def validation_exception_handler(request: Request, exc):
     """Handle validation errors with structured response."""
     logger.warning(f"Validation error on {request.url.path}: {exc}")

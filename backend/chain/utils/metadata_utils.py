@@ -1,7 +1,7 @@
 from typing import Dict
 import re
 
-def extract_legal_metadata(text: str, filename: str) -> Dict:
+def extract_legal_metadata_original(text: str, filename: str) -> Dict:
         """Extract legal-specific metadata from document text"""
         metadata = {
             'source_file': filename,
@@ -45,6 +45,53 @@ def extract_legal_metadata(text: str, filename: str) -> Dict:
                 metadata['legal_topics'].append(topic)
 
         return metadata
+
+def extract_legal_metadata(text: str, filename: str) -> Dict:
+    metadata = {
+        'source_file': filename,
+        'document_type': identify_document_type(filename, text),
+        'jurisdiction': 'india',
+        'extracted_sections': [],
+        'extracted_acts': [],
+        'legal_topics': [],
+        'complexity_level': 'intermediate'
+    }
+
+    section_pattern = r'Section\s+(\d+[A-Z]*)'
+    sections = re.findall(section_pattern, text, re.IGNORECASE)
+    metadata['extracted_sections'] = list(set(sections))
+
+    act_patterns = [
+        r'Indian Penal Code',
+        r'Code of Criminal Procedure',
+        r'Constitution of India',
+        r'Criminal Procedure Code',
+        r'Hindu Marriage Act',
+        r'Evidence Act',
+    ]
+    for pattern in act_patterns:
+        if re.search(pattern, text, re.IGNORECASE):
+            metadata['extracted_acts'].append(pattern)
+
+    topic_keywords = {
+        'criminal': ['murder', 'theft', 'assault', 'criminal', 'police', 'fir'],
+        'civil': ['contract', 'property', 'damages', 'civil', 'suit'],
+        'constitutional': ['fundamental rights', 'directive principles', 'constitution'],
+        'family': ['marriage', 'divorce', 'custody', 'maintenance'],
+        'corporate': ['company', 'shares', 'directors', 'corporate']
+    }
+    text_lower = text.lower()
+    for topic, keywords in topic_keywords.items():
+        if any(keyword in text_lower for keyword in keywords):
+            metadata['legal_topics'].append(topic)
+
+    # Convert lists to comma-separated strings
+    metadata['extracted_sections'] = ', '.join(metadata['extracted_sections'])
+    metadata['extracted_acts'] = ', '.join(metadata['extracted_acts'])
+    metadata['legal_topics'] = ', '.join(metadata['legal_topics'])
+
+    return metadata
+
     
 def identify_document_type(filename:str, text:str) -> str:
         """Identify the type of legal document"""

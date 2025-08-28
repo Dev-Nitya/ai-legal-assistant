@@ -45,12 +45,12 @@ class RedisRateLimitStorage(RateLimitStorage):
         self.redis_client = redis_client
         if not self.redis_client:
             try:
-                self.redis_client = redis.from_url(
-                    settings.redis_url,
-                    decode_responses=True,
-                    socket_timeout=1,  # Fast timeout for rate limiting
+                self.redis_client = redis.Redis(
+                    host=settings.redis_host,
+                    port=settings.redis_port,
+                    socket_timeout=1,
                     socket_connect_timeout=1,
-                    retry_on_timeout=True
+                    retry_on_timeout=True     
                 )
                 # Test connection
                 self.redis_client.ping()

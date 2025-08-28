@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, field_validator, model_validator
 from datetime import datetime
 
-from .base import BaseRequestModel, BaseResponseModel, ComplexityLevel, DocumentType
+from schemas.base import BaseRequestModel, BaseResponseModel, ComplexityLevel, DocumentType
 from schemas.validation import ValidationError, validate_filters_dict
 from validators.legal import validate_legal_question
 from validators.security import detect_prompt_injection
@@ -120,7 +120,7 @@ class EnhancedChatRequest(BaseRequestModel):
         except ValidationError as e:
             raise ValueError(str(e))
         
-    @model_validator
+    @model_validator(mode='after')
     def validate_request_combination(cls, values):
         use_hybrid = values.get('use_hybrid_search', True)
         filters = values.get('filters')

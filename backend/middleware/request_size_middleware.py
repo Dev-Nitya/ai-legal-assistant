@@ -3,13 +3,12 @@ Request size middleware using existing security validators.
 Lightweight wrapper around validators/security.py functions.
 """
 
-import json
 import logging
-from fastapi import Request, HTTPException
+from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from backend.schemas.validation import ValidationError
+from schemas.validation import ValidationError
 from validators.security import validate_request_size, validate_request_headers_size
 
 logger = logging.getLogger(__name__)

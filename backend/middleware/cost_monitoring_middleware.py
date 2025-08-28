@@ -21,6 +21,7 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from services.auth_service import auth_service
 from services.cost_monitoring_service import cost_monitoring_service
 from utils.token_calculator import count_tokens, token_calculator
 
@@ -81,21 +82,13 @@ class CostMonitoringMiddleware(BaseHTTPMiddleware):
             3. If NO: Just let it through normally
         """
 
-        # Step 1: Budget checking is enabled, so let's check
-        if not self.enabled:
-            # Middleware is disabled (e.g. in testing), just proceed
-            logger.debug("Cost monitoring middleware is disabled, skipping budget check")
-            return await call_next(request)
-
-        # Step 2: Is budget monitoring enabled?
-        if not self._should_check_budget(request):
-            # This is a free endpoint, just let it through
+        if not self.enabled or not self._should_check_budget(request):
             return await call_next(request)
             
         logger.info(f"Checking budget for AI request: {request.url.path}")
 
         try:
-            user_id = self._get_user_id_from_request(request)
+            user_id, user_tier = self._get_user_info_from_request(request)
             if not user_id:
                 logger.warning("No user ID found, allowing request without budget check")
                 return await call_next(request)
@@ -106,7 +99,8 @@ class CostMonitoringMiddleware(BaseHTTPMiddleware):
             # Step 4: Can this user afford this request?
             can_afford, reason = cost_monitoring_service.can_user_afford_this_request(
                 user_id=user_id, 
-                estimated_cost=estimated_cost)
+                estimated_cost=estimated_cost,
+                user_tier=user_tier)
 
             if not can_afford:
                 logger.warning(f"Blocking request - budget exceeded for user {user_id}: {reason}")
@@ -114,9 +108,9 @@ class CostMonitoringMiddleware(BaseHTTPMiddleware):
 
             logger.info(f"Budget check passed for user {user_id}: ${estimated_cost['total_cost']:.4f}")
             response = await call_next(request)
-            
+
             self._add_cost_info_to_response(response, estimated_cost)
-            
+
             return response
         
         except Exception as e:
@@ -162,7 +156,7 @@ class CostMonitoringMiddleware(BaseHTTPMiddleware):
         logger.debug(f"No budget check required for request: {request.method} {request_path}")
         return False
         
-    def _get_user_id_from_request(self, request: Request) -> Optional[str]:
+    def _get_user_info_from_request(self, request: Request) -> Tuple[Optional[str], str]:
         """
         Figure out who is making this request.
         
@@ -175,27 +169,24 @@ class CostMonitoringMiddleware(BaseHTTPMiddleware):
             request: The HTTP request
             
         Returns:
-            User ID string, or None if we can't identify them
+            Tuple of (user_id, user_tier)
         """
-        # Method 1: Check for user ID in headers
-        user_id = request.headers.get("X-User-ID")
-        if user_id:
-            logger.debug(f"Found user ID in headers: {user_id}")
-            return user_id
-        
-        # Method 2: Extract from authentication token
-        auth_header = request.headers.get("Authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            token = auth_header.replace("Bearer ", "")
-            if token:
-                logger.debug(f"Found user ID in token: {token[:10]}...")
-                return f"token_user_{hash(token) % 10000}"  # Simple hash for demo
+        try:
+            auth_header = request.headers.get("authorization")
+            if auth_header and auth_header.startswith("Bearer "):
+                token = auth_header.replace("Bearer ", "")
+                user_info = auth_service.get_user_from_token(token)
+                if user_info:
+                    logger.debug(f"Found authenticated user: {user_info['user_id']}")
+                    return user_info['user_id'], user_info['tier']
+        except Exception as e:
+            logger.debug(f"Could not extract user from token: {e}")
             
         # Method 3: Use IP address as fallback (for anonymous users)
         if request.client:
             ip_address = request.client.host
             logger.debug(f"Using IP address as user ID: {ip_address}")
-            return f"ip_{ip_address.replace('.', '_')}"
+            return f"ip_{ip_address.replace('.', '_')}", 'free'
         
         # Method 4: Can't identify user
         logger.warning("Cannot identify user for budget tracking")
@@ -420,6 +411,32 @@ class CostMonitoringMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             logger.error(f"Error reading request body: {e}")
             return None
+        
+    def _create_budget_exceeded_response(self, estimated_cost: Dict, reason: str) -> JSONResponse:
+        return JSONResponse(
+            status_code=429,  # Too Many Requests
+            content={
+                "error": "Budget exceeded",
+                "message": reason,
+                "estimated_cost": estimated_cost.get('total_cost_usd', 0) if estimated_cost else 0,
+                "suggestion": "Upgrade your plan or wait for budget reset to continue using AI features."
+            },
+            headers={
+                "X-Budget-Exceeded": "true",
+                "X-Estimated-Cost": str(estimated_cost.get('total_cost_usd', 0)) if estimated_cost else "0"
+            }
+        )
+
+    def _add_cost_info_to_response(self, response: Response, estimated_cost: Optional[Dict]):
+        if estimated_cost:
+            # Add estimated cost info to response headers
+            response.headers["X-Estimated-Cost-USD"] = str(estimated_cost.get('total_cost_usd', 0))
+            response.headers["X-Estimated-Tokens"] = str(estimated_cost.get('total_tokens', 0))
+            response.headers["X-Model-Used"] = estimated_cost.get('model', 'unknown')
+            
+            # Note about actual vs estimated
+            response.headers["X-Cost-Note"] = "Estimated cost - actual cost may vary based on AI response length"
+    
         
 def create_cost_monitoring_middleware(enabled: bool = True):
     """

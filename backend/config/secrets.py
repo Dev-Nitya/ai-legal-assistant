@@ -6,6 +6,8 @@ from botocore.exceptions import ClientError, NoCredentialsError
 import logging
 from functools import lru_cache
 
+from config.settings import settings
+
 logger = logging.getLogger(__name__)
 
 class SecretsManager:
@@ -42,11 +44,15 @@ class SecretsManager:
                 error_code = e.response['Error']['Code']
                 if error_code == 'ResourceNotFoundException':
                     logger.warning(f"🔍 Secret {secret_name} not found in AWS Secrets Manager")
+                    return settings[secret_name]
                 else:
                     logger.error(f"❌ Error retrieving secret {secret_name}: {e}")
+                    return settings[secret_name]
+                    
             except Exception as e:
                 logger.error(f"❌ Unexpected error retrieving secret {secret_name}: {e}")
-        
+                return settings[secret_name]
+
         # Fallback to environment variable
         if fallback_env_var:
             env_value = os.getenv(fallback_env_var)
@@ -60,14 +66,14 @@ class SecretsManager:
 
     def get_openai_api_key(self) -> str:
         """Get OpenAI API key with fallback"""
-        api_key = self.get_secret("openai-key", "OPENAI_API_KEY")
+        api_key = self.get_secret("openai_api_key", "OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OpenAI API key not found in Secrets Manager or environment variables")
         return api_key
 
     def get_langsmith_api_key(self) -> Optional[str]:
         """Get LangSmith API key (optional)"""
-        return self.get_secret("langsmith-key", "LANGSMITH_API_KEY")
+        return self.get_secret("langsmith_api_key", "LANGSMITH_API_KEY")
     
     def get_database_credentials(self) -> Optional[Dict[str, str]]:
         """Get database credentials if using RDS"""

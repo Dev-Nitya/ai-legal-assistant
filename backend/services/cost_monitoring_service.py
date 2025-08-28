@@ -27,7 +27,9 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 import redis
 
-from config.settings import Settings
+from config.database import get_db
+from models.user import UserBudget
+from config.settings import settings
 from config.cost_limits import (
     UserTier, BudgetLimits, BUDGET_TIERS, ALERT_THRESHOLDS,
     COST_ENFORCEMENT_CONFIG, COST_DATA_TTL, get_budget_for_tier
@@ -121,31 +123,6 @@ class BudgetStatus:
     monthly: Dict[str, float]
     last_updated: str
 
-    def get_most_restricitive_limit(self) -> Tuple[str, float]:
-        """
-        Get the most restrictive budget limit currently in effect.
-        
-        Returns:
-            Tuple of (period_name, remaining_budget)
-            
-        Why This Is Important:
-        - Determines if a request can proceed
-        - Helps users understand their constraints
-        - Enables smart budget management
-        """
-
-        limits = {
-            "hourly": self.hourly.get("remaining", 0),
-            "daily": self.daily.get("remaining", 0),
-            "weekly": self.weekly.get("remaining", 0),
-            "monthly": self.monthly.get("remaining", 0)
-        }
-
-        # Find the period with the lowest remaining budget
-        most_restrictive = min(limits.items(), key=lambda x: x[1])
-        return most_restrictive
-    
-    
 class CostMonitoringService:
     """
     This is a "Budget Manager" for our app.
@@ -161,7 +138,31 @@ class CostMonitoringService:
          # Connect to Redis (our "database" for fast budget lookups)
         self.redis_client = self._connect_to_redis()
 
-    def can_user_afford_this_request(self, user_id, estimated_cost):
+    def _connect_to_redis(self):
+        try:
+            # Try to connect to Redis server
+            redis_client = redis.Redis(
+                host=settings.redis_host,      # Redis server location
+                port=settings.redis_port,            # Standard Redis port
+                db=0,                 # Redis database number (0 is default)
+                decode_responses=True, # Convert bytes to strings automatically
+                socket_timeout=5,     # Don't wait forever for connection
+                socket_connect_timeout=5
+            )
+            
+            # Test the connection
+            redis_client.ping()
+            logger.info("✅ Connected to Redis for cost monitoring")
+            return redis_client
+        except (redis.ConnectionError, redis.TimeoutError) as e:
+            logger.warning(f"⚠️  Redis not available: {e}")
+            logger.warning("📝 Using in-memory storage (development mode)")
+     
+        except Exception as e:
+            logger.error(f"❌ Unexpected Redis error: {e}")
+            logger.warning("📝 Falling back to in-memory storage")
+     
+    def can_user_afford_this_request(self, user_id, estimated_cost, user_tier):
         """
         SIMPLE QUESTION: Can this user afford this AI request?
         
@@ -174,24 +175,38 @@ class CostMonitoringService:
         4. Check if estimated cost fits within remaining budget
         """
 
-        # Step 1: What are this user's spending limit?
-        user_limits = self._get_user_spending_limits(user_id)
-
-        # Step 2: How much has this user already spent?
-        user_current_spending = self._get_user_current_spending(user_id)
-
-        # Step 3: How much budget is left?
-        daily_remaining = user_limits['daily'] - user_current_spending['daily']
-        monthly_remaining = user_limits['monthly'] - user_current_spending['monthly']
-
-        # Step 4: Can they afford this request?
-        can_afford = (estimated_cost <= daily_remaining and 
-                     estimated_cost <= monthly_remaining)
+        if not estimated_cost or estimated_cost.get('total_cost_usd', 0) <= 0:
+            return True, "No cost estimated"
         
-        if can_afford:
-            return True, "User can afford the request"
-        else:
-            return False, f"Would exceed budget. Daily remaining: ${daily_remaining}"
+        total_cost = estimated_cost['total_cost_usd']
+
+        try:
+            db = next(get_db())
+
+            user_budget = db.query(UserBudget).filter(UserBudget.user_id == user_id).first()
+            if not user_budget:
+                db.close()
+                return False, "No budget configuration found for user"
+            
+
+            # Check if daily budget allows this request
+            daily_remaining = user_budget.daily_limit_usd - user_budget.daily_spent_usd
+            if total_cost > daily_remaining:
+                db.close()
+                return False, f"Daily budget exceeded. Remaining: ${daily_remaining:.2f}, Request: ${total_cost:.2f}"
+            
+            # Check if monthly budget allows this request  
+            monthly_remaining = user_budget.monthly_limit_usd - user_budget.monthly_spent_usd
+            if total_cost > monthly_remaining:
+                db.close()
+                return False, f"Monthly budget exceeded. Remaining: ${monthly_remaining:.2f}, Request: ${total_cost:.2f}"
+
+            db.close()
+            return True, "Budget check passed"
+            
+        except Exception as e:
+            logger.error(f"Budget check error for user {user_id}: {e}")
+            return False, "Budget check failed"
 
     def record_money_spent(self, user_id, actual_cost):
         """
@@ -205,85 +220,93 @@ class CostMonitoringService:
         3. Check if we should send any alerts
         """
 
-        # Step 1 & 2: Update spending amounts
-        self._add_to_user_spending(user_id, actual_cost)
+        if not actual_cost or actual_cost <= 0:
+            logger.debug(f"No cost to record for user {user_id}")
+            return True
 
-        # Step 3: Should we warn the user?
-        self._check_if_alerts_needed(user_id)
+        try:
+            # Get database session
+            db = next(get_db())
+            
+            # Find user's budget record
+            user_budget = db.query(UserBudget).filter(UserBudget.user_id == user_id).first()
+            
+            if not user_budget:
+                logger.warning(f"No budget record found for user {user_id} when recording ${actual_cost:.4f}")
+                db.close()
+                return False
+            
+            # Check if we need to reset daily/monthly counters
+            current_date = datetime.utcnow().date()
+            current_month = datetime.utcnow().replace(day=1).date()
 
-    def _get_user_spending_limits(self, user_id):
-        """
-        SIMPLE LOOKUP: What is this user allowed to spend?
-        
-        This is like looking up someone's credit limit.
-        Different users have different limits based on their plan.
-        """
-        # Try to get custom limits from database
-        custom_limits = self.redis_client.get(f"user_limits:{user_id}")
-        
-        if custom_limits:
-            return json.loads(custom_limits)
-        else:
-            # Return default limits for new users
-            return {"daily": 5.00, "monthly": 50.00}  # $5/day, $50/month
-        
-    def _get_user_current_spending(self, user_id):
-        """
-        SIMPLE LOOKUP: How much has this user already spent?
-        
-        This is like checking your bank account balance.
-        We track spending by day and month.
-        """
-        today = datetime.now().strftime("%Y-%m-%d")
-        this_month = datetime.now().strftime("%Y-%m")
+            # Reset daily spending if it's a new day
+            if user_budget.daily_reset_date and user_budget.daily_reset_date.date() < current_date:
+                logger.info(f"Resetting daily spending for user {user_id} (new day)")
+                user_budget.daily_spent_usd = 0.0
+                user_budget.daily_reset_date = datetime.utcnow()
+            
+            # Reset monthly spending if it's a new month
+            if user_budget.monthly_reset_date and user_budget.monthly_reset_date.date() < current_month:
+                logger.info(f"Resetting monthly spending for user {user_id} (new month)")
+                user_budget.monthly_spent_usd = 0.0
+                user_budget.monthly_reset_date = datetime.utcnow()
 
-        # Get spending amount from Redis
-        daily_spent = self.redis_client.get(f"spending:{user_id}:daily:{today}")
-        monthly_spent = self.redis_client.get(f"spending:{user_id}:monthly:{this_month}")
+            # Add the cost to current spending
+            user_budget.daily_spent_usd += actual_cost
+            user_budget.monthly_spent_usd += actual_cost
+            user_budget.updated_at = datetime.utcnow()
+            
+            # Commit the changes
+            db.commit()
 
-        return {
-            "daily": float(daily_spent) if daily_spent else 0.0,
-            "monthly": float(monthly_spent) if monthly_spent else 0.0
-        }
-    
-    def _add_to_user_spending(self, user_id, cost):
-        """
-        SIMPLE UPDATE: Add this cost to user's spending totals.
-        
-        This is like debiting money from their account.
-        We update both daily and monthly totals.
-        """
-        today = datetime.now().strftime("%Y-%m-%d")
-        this_month = datetime.now().strftime("%Y-%m")
-        
-        # Add cost to daily total
-        self.redis_client.incrbyfloat(f"spending:{user_id}:daily:{today}", cost)
-        
-        # Add cost to monthly total  
-        self.redis_client.incrbyfloat(f"spending:{user_id}:monthly:{this_month}", cost)
-        
-        # Set expiration so old data gets cleaned up automatically
-        self.redis_client.expire(f"spending:{user_id}:daily:{today}", 7 * 24 * 3600)  # 7 days
-        self.redis_client.expire(f"spending:{user_id}:monthly:{this_month}", 90 * 24 * 3600)  # 90 days
+            logger.info(f"💰 Recorded ${actual_cost:.4f} for user {user_id}. "
+                       f"Daily: ${user_budget.daily_spent_usd:.2f}/${user_budget.daily_limit_usd:.2f}, "
+                       f"Monthly: ${user_budget.monthly_spent_usd:.2f}/${user_budget.monthly_limit_usd:.2f}")
+            
+            # Check if we should send alerts
 
-    def _check_if_alerts_needed(self, user_id):
+            self._check_budget_alerts(user_budget)
+
+            db.close()
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error recording ${actual_cost:.4f} for user {user_id}: {e}")
+            if 'db' in locals():
+                db.rollback()
+                db.close()
+            return False
+
+    def _check_budget_alerts(self, user_budget: UserBudget):
         """
-        SIMPLE CHECK: Should we warn the user about their spending?
+        UPDATED: Check if alerts needed based on UserBudget data
         
-        This is like your bank sending you a "low balance" alert.
-        We warn at 75% and 90% of budget used.
+        SIMPLE EXPLANATION:
+        Look at user's spending percentage and send alerts:
+        - 75% of budget used → WARNING
+        - 90% of budget used → CRITICAL
         """
-        limits = self._get_user_spending_limits(user_id)
-        current = self._get_user_current_spending(user_id)
         
-        # Calculate percentage of daily budget used
-        daily_percent = (current["daily"] / limits["daily"]) * 100
-        
-        # Send alerts at different thresholds
-        if daily_percent >= 90:
-            self._send_alert(user_id, "CRITICAL", f"90% of daily budget used")
-        elif daily_percent >= 75:
-            self._send_alert(user_id, "WARNING", f"75% of daily budget used")
+        try:
+            # Calculate daily budget usage percentage
+            daily_usage_percent = (user_budget.daily_spent_usd / user_budget.daily_limit_usd) * 100 if user_budget.daily_limit_usd > 0 else 0
+            monthly_usage_percent = (user_budget.monthly_spent_usd / user_budget.monthly_limit_usd) * 100 if user_budget.monthly_limit_usd > 0 else 0
+            
+            # Send alerts based on usage
+            if daily_usage_percent >= 90:
+                self._send_alert(user_budget.user_id, "CRITICAL", 
+                               f"90% of daily budget used (${user_budget.daily_spent_usd:.2f}/${user_budget.daily_limit_usd:.2f})")
+            elif daily_usage_percent >= 75:
+                self._send_alert(user_budget.user_id, "WARNING", 
+                               f"75% of daily budget used (${user_budget.daily_spent_usd:.2f}/${user_budget.daily_limit_usd:.2f})")
+            
+            if monthly_usage_percent >= 90:
+                self._send_alert(user_budget.user_id, "CRITICAL", 
+                               f"90% of monthly budget used (${user_budget.monthly_spent_usd:.2f}/${user_budget.monthly_limit_usd:.2f})")
+                
+        except Exception as e:
+            logger.error(f"Error checking budget alerts for user {user_budget.user_id}: {e}")
 
     def _send_alert(self, user_id, level, message):
         """

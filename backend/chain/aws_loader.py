@@ -244,7 +244,7 @@ class AWSDocumentsLoader:
             return vector_store, docs
             
         except Exception as e:
-            print(f"Error creating vector store: {e}")
+            print(f"Error creating vector store in AWS loader: {e}")
             raise
 
     def get_or_create_vector_store(self):

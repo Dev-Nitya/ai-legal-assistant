@@ -36,7 +36,7 @@ class ErrorResponseModel(BaseResponseModel):
 class ValidationErrorResponse(ErrorResponseModel):
     """Validation error response model."""
     
-    error_code: str = Field("VALIDATION_ERROR", const=True)
+    error_code: str = Field("VALIDATION_ERROR")
     field_errors: Optional[Dict[str, List[str]]] = Field(
         None, 
         description="Field-specific validation errors"
@@ -45,24 +45,24 @@ class ValidationErrorResponse(ErrorResponseModel):
 class RateLimitErrorResponse(ErrorResponseModel):
     """Rate limit error response model."""
     
-    error_code: str = Field("RATE_LIMIT_EXCEEDED", const=True)
+    error_code: str = Field("RATE_LIMIT_EXCEEDED")
     retry_after_seconds: int = Field(..., description="Seconds to wait before retry")
     current_usage: Dict[str, int] = Field(..., description="Current usage statistics")
 
 class SecurityErrorResponse(ErrorResponseModel):
     """Security violation error response."""
     
-    error_code: str = Field("SECURITY_VIOLATION", const=True)
+    error_code: str = Field("SECURITY_VIOLATION")
     violation_type: str = Field(..., description="Type of security violation detected")
 
 class ContentPolicyErrorResponse(ErrorResponseModel):
     """Content policy violation error response."""
     
-    error_code: str = Field("CONTENT_POLICY_VIOLATION", const=True)
+    error_code: str = Field("CONTENT_POLICY_VIOLATION")
     policy_violations: List[str] = Field(..., description="List of policy violations")
 
 class InternalErrorResponse(ErrorResponseModel):
     """Internal server error response."""
     
-    error_code: str = Field("INTERNAL_ERROR", const=True)
+    error_code: str = Field("INTERNAL_ERROR")
     incident_id: Optional[str] = Field(None, description="Incident tracking ID")

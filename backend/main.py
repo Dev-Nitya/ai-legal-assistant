@@ -10,6 +10,8 @@ load_dotenv()
 
 from routes.health import router as health_router
 from routes.enhanced_chat import router as enhanced_chat_router
+from routes.evaluation import router as evaluation_router
+from routes.auth import router as auth_router
 from config.settings import settings
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_size_middleware import RequestSizeMiddleware
@@ -38,12 +40,12 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-     allow_origins=["*"] if os.getenv("ENVIRONMENT") == "development" else [
-        "https://yourdomain.com",
-        "https://www.yourdomain.com"
+    allow_origins=["*"] if os.getenv("ENVIRONMENT") == "development" else [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
     ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],  # Allow all headers
 )
 
@@ -75,7 +77,9 @@ async def log_requests(request: Request, call_next):
     return response
 
 app.include_router(health_router)
+app.include_router(auth_router, prefix="/api", tags=["authentication"])
 app.include_router(enhanced_chat_router, prefix="/api")
+app.include_router(evaluation_router, prefix="/api", tags=["evaluation"])
 
 @app.get("/")
 async def root():
