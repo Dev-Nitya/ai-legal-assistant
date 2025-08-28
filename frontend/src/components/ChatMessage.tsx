@@ -1,5 +1,11 @@
 import React from "react";
-import { User, Bot, Clock, CheckCircle, AlertCircle } from "lucide-react";
+import {
+  FiUser as User,
+  FiCpu as Bot,
+  FiClock as Clock,
+  FiCheckCircle as CheckCircle,
+  FiAlertCircle as AlertCircle,
+} from "react-icons/fi";
 import type { Message } from "../types";
 
 interface ChatMessageProps {
@@ -84,7 +90,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
                         key={index}
                         className="inline-block px-2 py-1 bg-amber-100 text-amber-800 text-xs rounded-full"
                       >
-                        {source}
+                        {typeof source === "string" ? source : source.source}
                       </span>
                     ))}
                   </div>

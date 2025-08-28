@@ -6,16 +6,12 @@ export type ComplexityLevel = 'simple' | 'intermediate' | 'advanced';
 export type DocumentType = 'case_law' | 'statute' | 'regulation' | 'constitution' | 'legal_document';
 
 export interface BudgetInfo {
-  limits: {
-    daily_limit_usd: number;
-    monthly_limit_usd: number;
-    hourly_limit: number;
-  };
-  usage: {
-    daily_spent_usd: number;
-    monthly_spent_usd: number;
-    hourly_spent: number;
-  };
+  daily_limit_usd: number;
+  monthly_limit_usd: number;
+  daily_spent_usd: number;
+  monthly_spent_usd: number;
+  requests_this_hour: number;
+  remaining_budget: number;
 }
 
 export interface User {
@@ -24,10 +20,8 @@ export interface User {
   full_name: string;
   tier: UserTier;
   is_active: boolean;
-  created_at?: string;
-  last_login?: string;
-  budget_info?: BudgetInfo;
-  budget_limits?: Record<string, number>;
+  created_at: string;
+  budget_info: BudgetInfo;
 }
 
 export interface AuthRequest {
@@ -71,34 +65,15 @@ export interface DocumentFilters {
 }
 
 export interface EnhancedChatRequest {
-  user_id?: string;
+  user_id: string;
   question: string;
-  complexity_level?: ComplexityLevel;
-  use_tools?: boolean;
-  use_hybrid_search?: boolean;
+  complexity_level: ComplexityLevel;
+  use_tools: boolean;
+  use_hybrid_search: boolean;
   filters?: DocumentFilters;
-  bypass_cache?: boolean;
-  include_citations?: boolean;
-  max_sources?: number;
-}
-
-// Simple Chat Request for compatibility
-export interface ChatRequest {
-  question: string;
-  user_id?: string;
-  session_id?: string;
-  use_tools?: boolean;
-  complexity_level?: ComplexityLevel;
-}
-
-// Simple Chat Response for compatibility
-export interface ChatResponse {
-  answer: string;
-  source_documents: string[] | SourceDocument[];
-  confidence: number;
-  tools_used?: string[];
-  citations?: Citation[];
-  reading_level?: ComplexityLevel;
+  bypass_cache: boolean;
+  include_citations: boolean;
+  max_sources: number;
 }
 
 export interface SourceDocument {

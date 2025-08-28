@@ -1,0 +1,123 @@
+import { useState, useEffect, createContext, useContext } from "react";
+import type { ReactNode } from "react";
+import type {
+  User,
+  AuthRequest,
+  RegisterRequest,
+  AuthResponse,
+} from "../types";
+
+interface AuthContextType {
+  user: User | null;
+  isAuthenticated: boolean;
+  login: (credentials: AuthRequest) => Promise<void>;
+  register: (userData: RegisterRequest) => Promise<void>;
+  logout: () => void;
+  loading: boolean;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error("useAuth must be used within an AuthProvider");
+  }
+  return context;
+};
+
+interface AuthProviderProps {
+  children: ReactNode;
+}
+
+export const AuthProvider = ({ children }: AuthProviderProps) => {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // Check for stored auth token
+    const token = localStorage.getItem("auth_token");
+    const userData = localStorage.getItem("user_data");
+
+    if (token && userData) {
+      try {
+        setUser(JSON.parse(userData));
+      } catch (error) {
+        console.error("Error parsing stored user data:", error);
+        localStorage.removeItem("auth_token");
+        localStorage.removeItem("user_data");
+      }
+    }
+
+    setLoading(false);
+  }, []);
+
+  const login = async (credentials: AuthRequest): Promise<void> => {
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(credentials),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || "Login failed");
+      }
+
+      const data: AuthResponse = await response.json();
+
+      localStorage.setItem("auth_token", data.access_token);
+      localStorage.setItem("user_data", JSON.stringify(data.user));
+      setUser(data.user);
+    } catch (error) {
+      console.error("Login error:", error);
+      throw error;
+    }
+  };
+
+  const register = async (userData: RegisterRequest): Promise<void> => {
+    try {
+      const response = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(userData),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || "Registration failed");
+      }
+
+      const data: AuthResponse = await response.json();
+
+      localStorage.setItem("auth_token", data.access_token);
+      localStorage.setItem("user_data", JSON.stringify(data.user));
+      setUser(data.user);
+    } catch (error) {
+      console.error("Registration error:", error);
+      throw error;
+    }
+  };
+
+  const logout = () => {
+    localStorage.removeItem("auth_token");
+    localStorage.removeItem("user_data");
+    setUser(null);
+  };
+
+  const value: AuthContextType = {
+    user,
+    isAuthenticated: !!user,
+    login,
+    register,
+    logout,
+    loading,
+  };
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+};
