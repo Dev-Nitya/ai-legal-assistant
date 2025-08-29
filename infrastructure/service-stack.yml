@@ -1,73 +1,115 @@
-AWSTemplateFormatVersion: '2010-09-09'
-Description: 'AI Legal Assistant - Service stack (TaskDefinition + ECS Service)'
+AWSTemplateFormatVersion: "2010-09-09"
+Description: ECS Fargate Service Stack for AI Legal Assistant
 
 Parameters:
   Environment:
     Type: String
     Default: production
+
   ClusterName:
     Type: String
-    Default: ai-legal-assistant-cluster
+    Description: Name of the ECS cluster
+
   ImageUri:
     Type: String
-    Description: "Full image URI (e.g. <account>.dkr.ecr.<region>.amazonaws.com/ai-legal-assistant:latest)"
+    Description: Docker image URI in ECR
+
   AlbTargetGroupArn:
     Type: String
-    Description: "ARN of the ALB target group (to register service)"
+    Description: Target group ARN for load balancer
+
   AppSecurityGroupId:
     Type: String
-    Description: "App security group id"
+    Description: Security group for ECS tasks
+
   Subnet1:
     Type: String
+    Description: Subnet ID 1 for ECS tasks
+
   Subnet2:
     Type: String
-  TaskRoleArn:
-    Type: String
-    Description: "Task role ARN (optional)"
-    Default: ""
+    Description: Subnet ID 2 for ECS tasks
 
 Resources:
+  ###############################################
+  # IAM Role for ECS Task Execution
+  ###############################################
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${Environment}-ecsTaskExecutionRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  ###############################################
+  # ECS Task Definition
+  ###############################################
   AppTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
-      Family: ai-legal-assistant-task
-      Cpu: "512"
-      Memory: "1024"
+      Family: !Sub "${Environment}-app-taskdef"
+      Cpu: "256"
+      Memory: "512"
       NetworkMode: awsvpc
-      RequiresCompatibilities: [FARGATE]
-      ExecutionRoleArn: !If [ HasTaskRole, !Ref TaskRoleArn, !Ref "AWS::NoValue" ]
-      TaskRoleArn: !If [ HasTaskRole, !Ref TaskRoleArn, !Ref "AWS::NoValue" ]
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
       ContainerDefinitions:
-        - Name: ai-legal-assistant
+        - Name: app
           Image: !Ref ImageUri
+          Essential: true
           PortMappings:
-            - ContainerPort: 8000
-          Environment:
-            - Name: ENVIRONMENT
-              Value: !Ref Environment
+            - ContainerPort: 3000
           LogConfiguration:
             LogDriver: awslogs
             Options:
-              awslogs-group: !Sub "/aws/ecs/ai-legal-assistant-${Environment}-${AWS::AccountId}"
-              awslogs-region: !Ref "AWS::Region"
+              awslogs-group: !Sub "/ecs/${Environment}-app"
+              awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: ecs
 
+  ###############################################
+  # ECS Service
+  ###############################################
   AppService:
     Type: AWS::ECS::Service
     Properties:
+      ServiceName: !Sub "${Environment}-app-service"
       Cluster: !Ref ClusterName
-      DesiredCount: 1
-      LaunchType: FARGATE
       TaskDefinition: !Ref AppTaskDefinition
+      LaunchType: FARGATE
+      DesiredCount: 1
       NetworkConfiguration:
         AwsvpcConfiguration:
           AssignPublicIp: ENABLED
-          SecurityGroups: [ !Ref AppSecurityGroupId ]
-          Subnets: [ !Ref Subnet1, !Ref Subnet2 ]
+          SecurityGroups:
+            - !Ref AppSecurityGroupId
+          Subnets:
+            - !Ref Subnet1
+            - !Ref Subnet2
       LoadBalancers:
-        - ContainerName: ai-legal-assistant
-          ContainerPort: 8000
+        - ContainerName: app
+          ContainerPort: 3000
           TargetGroupArn: !Ref AlbTargetGroupArn
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 50
 
-Conditions:
-  HasTaskRole: !Not [ !Equals [ !Ref TaskRoleArn, "" ] ]
+Outputs:
+  ServiceName:
+    Description: Name of the ECS Service
+    Value: !Ref AppService
+
+  TaskDefinitionArn:
+    Description: ARN of the ECS Task Definition
+    Value: !Ref AppTaskDefinition
+
+  ExecutionRoleArn:
+    Description: ARN of the ECS Task Execution Role
+    Value: !GetAtt ECSTaskExecutionRole.Arn
