@@ -47,9 +47,11 @@ Resources:
                 StorageClass: STANDARD_IA
               - TransitionInDays: 90
                 StorageClass: GLACIER
-      NotificationConfiguration:
-        EventBridgeConfiguration:
-          EventBridgeEnabled: true  # Enable for document upload notifications
+      Tags:
+        - Key: Name
+          Value: !Sub "${BucketName}-${Environment}-${AWS::AccountId}"
+        - Key: Environment
+          Value: !Ref Environment
   
   VPC:
     Type: AWS::EC2::VPC
