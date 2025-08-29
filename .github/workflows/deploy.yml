@@ -111,11 +111,35 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # --- Key Step: Comment out ECSService for first deploy ---
-      - name: Temporarily comment out ECSService in CloudFormation
+      # --- Safer removal of ECSService: create a full copy, then write a cleaned template ---
+      - name: Safely remove ECSService from CloudFormation (creates cleaned template)
         run: |
+          # keep a full copy to restore later
           cp infrastructure/cloudformation.yml infrastructure/cloudformation.full.yml
-          sed -i.bak '/^  ECSService:/,/^  [A-Za-z0-9]/s/^/  # /' infrastructure/cloudformation.yml
+
+          # install pyyaml so the inline script can parse safely
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml
+
+          # load template, remove Resources.ECSService if present, write back
+          python - <<'PY'
+          import yaml, sys
+          p = "infrastructure/cloudformation.yml"
+          with open(p, "r") as f:
+              doc = yaml.safe_load(f)
+          if isinstance(doc, dict):
+              resources = doc.get("Resources")
+              if isinstance(resources, dict) and "ECSService" in resources:
+                  resources.pop("ECSService")
+                  doc["Resources"] = resources
+                  with open(p, "w") as out:
+                      yaml.safe_dump(doc, out, default_flow_style=False, sort_keys=False)
+                  print("Removed ECSService from template")
+              else:
+                  print("ECSService not present; no change")
+          else:
+              print("Template not a dict; no change")
+          PY
 
       - name: Check if stack exists
         id: check-stack
@@ -226,10 +250,14 @@ jobs:
           docker tag ${{ env.APPLICATION_NAME }}:latest ${{ steps.get_ecr_repo.outputs.ecr_repo }}:latest
           docker push ${{ steps.get_ecr_repo.outputs.ecr_repo }}:latest
 
-      # --- Key Step: Restore ECSService and deploy full stack ---
+      # --- Restore original template (with ECSService) and deploy full stack ---
       - name: Restore ECSService in CloudFormation
         run: |
-          mv infrastructure/cloudformation.full.yml infrastructure/cloudformation.yml
+          if [ -f infrastructure/cloudformation.full.yml ]; then
+            mv infrastructure/cloudformation.full.yml infrastructure/cloudformation.yml
+          else
+            echo "No backup template found; assuming original file present"
+          fi
 
       - name: Deploy CloudFormation stack (with ECS Service)
         run: |
