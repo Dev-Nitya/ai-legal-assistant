@@ -81,7 +81,7 @@ Resources:
   ###############################################
   # ECS Service
   ###############################################
-  AppService:
+    AppService:
     Type: AWS::ECS::Service
     Properties:
       ServiceName: !Sub "${Environment}-app-service"
@@ -109,7 +109,6 @@ Resources:
       DeploymentConfiguration:
         MaximumPercent: 200
         MinimumHealthyPercent: 50
-    DependsOn: !If [HasAlbTargetGroup, AppTaskDefinition, !Ref AWS::NoValue]
 
 Outputs:
   ServiceName:
