@@ -17,7 +17,7 @@ Parameters:
   AlbTargetGroupArn:
     Type: String
     Description: Target group ARN for load balancer
-    Default: ""   # 👈 make it optional
+    Default: ""   # 👈 optional
 
   AppSecurityGroupId:
     Type: String
@@ -30,6 +30,9 @@ Parameters:
   Subnet2:
     Type: String
     Description: Subnet ID 2 for ECS tasks
+
+Conditions:
+  HasAlbTargetGroup: !Not [!Equals [!Ref AlbTargetGroupArn, ""]]
 
 Resources:
   ###############################################
@@ -94,20 +97,19 @@ Resources:
           Subnets:
             - !Ref Subnet1
             - !Ref Subnet2
-      # 👇 Load balancer block is conditionally included
+      # 👇 Conditional Load Balancer
       LoadBalancers: 
         !If 
           - HasAlbTargetGroup
-          - - ContainerName: app
+          - 
+            - ContainerName: app
               ContainerPort: 3000
               TargetGroupArn: !Ref AlbTargetGroupArn
           - !Ref AWS::NoValue
       DeploymentConfiguration:
         MaximumPercent: 200
         MinimumHealthyPercent: 50
-
-Conditions:
-  HasAlbTargetGroup: !Not [!Equals [!Ref AlbTargetGroupArn, ""]]
+    DependsOn: !If [HasAlbTargetGroup, AppTaskDefinition, !Ref AWS::NoValue]
 
 Outputs:
   ServiceName:

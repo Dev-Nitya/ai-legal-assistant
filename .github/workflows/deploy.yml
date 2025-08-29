@@ -157,8 +157,12 @@ jobs:
                   Subnet1=${{ needs.prepare.outputs.subnet1 }} \
                   Subnet2=${{ needs.prepare.outputs.subnet2 }}"
 
+          # Add ALB Target Group ARN only if present
           if [ -n "${{ needs.prepare.outputs.tg_arn }}" ] && [ "${{ needs.prepare.outputs.tg_arn }}" != "None" ]; then
+            echo "Target Group ARN found: ${{ needs.prepare.outputs.tg_arn }}"
             PARAMS="$PARAMS AlbTargetGroupArn=${{ needs.prepare.outputs.tg_arn }}"
+          else
+            echo "No Target Group ARN provided. Deploying without ALB..."
           fi
 
           aws cloudformation deploy \
