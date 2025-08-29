@@ -270,7 +270,7 @@ Resources:
       DBInstanceIdentifier: !Sub 'ai-legal-assistant-postgres-${Environment}'
       DBInstanceClass: 'db.t4g.micro'      # Smallest ARM instance (cheapest)
       Engine: 'postgres'
-      EngineVersion: '15.4'                # Recent stable version
+      EngineVersion: '17.6'                # Recent stable version
       AllocatedStorage: 20                 # 20GB storage (minimum)
       StorageType: 'gp2'                   # General Purpose SSD
       
