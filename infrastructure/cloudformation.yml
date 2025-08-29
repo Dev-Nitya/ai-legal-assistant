@@ -306,7 +306,7 @@ Resources:
   RedisCluster:
     Type: AWS::ElastiCache::CacheCluster
     Properties:
-      CacheClusterName: !Sub 'ai-legal-assistant-redis-${Environment}'
+      ClusterName: !Sub 'ai-legal-assistant-redis-${Environment}'
       Engine: 'redis'
       CacheNodeType: 'cache.t4g.micro'
       NumCacheNodes: 1
