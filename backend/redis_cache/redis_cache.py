@@ -1,120 +1,129 @@
+# This file handles Redis connections smartly
+
 import redis
 import json
-import hashlib
-import os
-from typing import Optional, Any, List, Dict
-from datetime import timedelta
 import logging
+from typing import Optional, Any, Dict, List
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-class LegalAssistantCache:
+class RedisCache:
     def __init__(self):
-        """Initialize Redis connection with fallback to local memory"""
         self.redis_client = None
-        self.local_cache = {} # Fallback local cache
-
+        self._connect()
+    
+    def _connect(self):
+        """Connect to Redis based on environment"""
         try:
-            redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+            redis_url = settings.redis_url
+            
+            if settings.is_production:
+                logger.info("🌐 Connecting to AWS ElastiCache Redis")
+            else:
+                logger.info("💻 Connecting to local Redis")
+            
+            # Create Redis connection
             self.redis_client = redis.from_url(
                 redis_url,
-                decode_responses=True,
-                socket_timeout=5,
-                socket_connect_timeout=5,
-                retry_on_timeout=True
+                decode_responses=True,  # Automatically decode responses
+                socket_connect_timeout=5,  # 5 second connection timeout
+                socket_timeout=5,  # 5 second operation timeout
+                retry_on_timeout=True,  # Retry if timeout
+                health_check_interval=30  # Check connection health every 30s
             )
+            
             # Test connection
             self.redis_client.ping()
-            logger.info("✅ Redis cache connected successfully")
+            logger.info(f"✅ Redis connection established")
+            
         except Exception as e:
-            logger.warning(f"⚠️ Redis unavailable, using in-memory cache: {e}")
+            logger.error(f"❌ Redis connection failed: {e}")
             self.redis_client = None
-
-    def _generate_cache_key(self, prefix: str, data: Any) -> str:
-        """Generate consistent cache key from data"""
-        if isinstance(data, str):
-            content = data
-        else:
-            content = json.dumps(data, sort_keys=True)
-
-        hash_object = hashlib.md5(content.encode())
-        return f"legal_assistant:{prefix}:{hash_object.hexdigest()}"
     
-    def get(self, key: str) -> Optional[Any]:
-        """Retrieve item from cache"""
-        try:
-            if self.redis_client:
-                value = self.redis_client.get(key)
-                if value:
-                    return json.loads(value)
-            else:
-                return self.local_cache.get(key)
-        except Exception as e:
-            logger.error(f"Error retrieving cache key {key}: {e}")
-        return None
-    
-    def set(self, key: str, value: Any, expire_seconds: int = 3600) -> bool:
-        """Set value in cache with expiration"""
-        try:
-            serialized_value = json.dumps(value, default=str)
-
-            if self.redis_client:
-                return self.redis_client.setex(key, expire_seconds, serialized_value)
-            else:
-                self.local_cache[key] = value
-                return True
-        except Exception as e:
-            logger.error(f"Error setting cache key {key}: {e}")
+    def is_connected(self) -> bool:
+        """Check if Redis is connected"""
+        if not self.redis_client:
             return False
-
-    def cache_query_response(self, query: str, response: Dict, ttl: int = 1800) -> bool:
-        """Cache a query response for 30 minutes"""
-        cache_key = self._generate_cache_key("query", query.lower().strip())
-        return self.set(cache_key, response, ttl)
-    
-    def get_cached_query(self, query: str) -> Optional[Dict]:
-        """Get cached response for a query"""
-        cache_key = self._generate_cache_key("query", query.lower().strip())
-        return self.get(cache_key)
-    
-    def cache_document_metadata(self, doc_hash: str, metadata: Dict, ttl_seconds: int = 86400) -> bool:
-        """Cache document metadata for 24 hours"""
-        cache_key = self._generate_cache_key("doc_meta", doc_hash)
-        return self.set(cache_key, metadata, ttl_seconds)
-
-    def get_document_metadata(self, doc_hash: str) -> Optional[Dict]:
-        """Get cached document metadata"""
-        cache_key = self._generate_cache_key("doc_meta", doc_hash)
-        return self.get(cache_key)
-    
-    def cache_vector_search(self, query: str, filters: Dict, results: List[Dict], ttl_seconds: int = 3600) -> bool:
-        """Cache vector search results for 1 hour"""
-        cache_data = {"query": query, "filters": filters}
-        cache_key = self._generate_cache_key("vector_search", cache_data)
-        return self.set(cache_key, results, ttl_seconds)
-
-    def get_cached_vector_search(self, query: str, filters: Dict) -> Optional[List[Dict]]:
-        """Get cached vector search results"""
-        cache_data = {"query": query, "filters": filters}
-        cache_key = self._generate_cache_key("vector_search", cache_data)
-        return self.get(cache_key)
-    
-    def invalidate_pattern(self, pattern: str) -> int:
-        """Invalidate all keys matching pattern"""
         try:
-            if self.redis_client:
-                keys = self.redis_client.keys(f"legal_assistant:{pattern}:*")
-                if keys:
-                    return self.redis_client.delete(*keys)
-            else:
-                # Clear local cache
-                keys_to_delete = [k for k in self.local_cache.keys() if pattern in k]
-                for key in keys_to_delete:
-                    del self.local_cache[key]
-                return len(keys_to_delete)
-        except Exception as e:
-            logger.error(f"Cache invalidation error for pattern {pattern}: {e}")
-        return 0
+            self.redis_client.ping()
+            return True
+        except:
+            return False
     
+    def set_cache(self, key: str, value: Any, expire: int = 3600) -> bool:
+        """
+        Store value in Redis cache
+        
+        USAGE:
+        cache.set_cache("user:123", {"name": "John"}, expire=1800)
+        """
+        if not self.is_connected():
+            logger.warning("Redis not connected, skipping cache set")
+            return False
+        
+        try:
+            # Convert value to JSON string
+            json_value = json.dumps(value, default=str)
+            
+            # Store in Redis with expiration
+            self.redis_client.setex(key, expire, json_value)
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error setting cache for key {key}: {e}")
+            return False
+    
+    def get_cache(self, key: str) -> Optional[Any]:
+        """
+        Get value from Redis cache
+        
+        USAGE:
+        user_data = cache.get_cache("user:123")
+        """
+        if not self.is_connected():
+            return None
+        
+        try:
+            # Get value from Redis
+            json_value = self.redis_client.get(key)
+            
+            if json_value is None:
+                return None
+            
+            # Convert JSON string back to Python object
+            return json.loads(json_value)
+            
+        except Exception as e:
+            logger.error(f"Error getting cache for key {key}: {e}")
+            return None
+    
+    def delete_cache(self, key: str) -> bool:
+        """Delete value from Redis cache"""
+        if not self.is_connected():
+            return False
+        
+        try:
+            self.redis_client.delete(key)
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting cache for key {key}: {e}")
+            return False
+    
+    def get_cached_query(self, cache_key: str) -> Optional[Dict]:
+        """Get cached query result (used by enhanced_chat)"""
+        return self.get_cache(f"query:{cache_key}")
+    
+    def set_cached_query(self, cache_key: str, result: Dict, expire: int = 1800) -> bool:
+        """Set cached query result (used by enhanced_chat)"""
+        return self.set_cache(f"query:{cache_key}", result, expire)
+
 # Global cache instance
-cache = LegalAssistantCache()
+cache = RedisCache()
+
+# Helper functions for backward compatibility
+def get_cached_query(cache_key: str) -> Optional[Dict]:
+    return cache.get_cached_query(cache_key)
+
+def set_cached_query(cache_key: str, result: Dict, expire: int = 1800) -> bool:
+    return cache.set_cached_query(cache_key, result, expire)

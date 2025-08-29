@@ -6,6 +6,8 @@ import time
 import os
 from datetime import datetime
 
+from fastapi.responses import JSONResponse
+
 load_dotenv()
 
 from routes.health import router as health_router
@@ -13,9 +15,8 @@ from routes.enhanced_chat import router as enhanced_chat_router
 from routes.evaluation import router as evaluation_router
 from routes.auth import router as auth_router
 from config.settings import settings
+from config.database import get_db, db_manager
 from middleware.rate_limit_middleware import RateLimitMiddleware
-#from middleware.request_size_middleware import RequestSizeMiddleware
-#from middleware.request_timeout_middleware import TimeoutProtectionMiddleware
 from middleware.cost_monitoring_middleware import CostMonitoringMiddleware
 
 logging.basicConfig(
@@ -49,12 +50,6 @@ app.add_middleware(
     allow_headers=["*"],  # Allow all headers
 )
 
-# app.add_middleware(
-#     RequestSizeMiddleware,
-#     max_content_kb=100,  # 100KB max content
-#     max_headers_kb=10    # 10KB max headers
-# )
-# app.add_middleware(TimeoutProtectionMiddleware, timeout_seconds=30)
 app.add_middleware(
     RateLimitMiddleware,
     skip_paths=["/docs", "/redoc", "/openapi.json", "/health/live"]  # Skip docs and basic health
@@ -81,20 +76,15 @@ app.include_router(auth_router, prefix="/api", tags=["authentication"])
 app.include_router(enhanced_chat_router, prefix="/api")
 app.include_router(evaluation_router, prefix="/api", tags=["evaluation"])
 
-@app.get("/")
-async def root():
-    return {
-        "message": "AI Legal Assistant API",
-        "version": "1.0.0",
-        "status": "online",
-        "timestamp": datetime.utcnow().isoformat(),
-        "endpoints": {
-            "health": "/health",
-            "metrics": "/metrics", 
-            "chat": "/api/chat",
-            "docs": "/docs" if os.getenv("ENVIRONMENT") != "production" else "disabled"
-        }
-    }
+# Global exception handler
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    """Handle unexpected errors gracefully"""
+    logger.error(f"Unexpected error: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error" if settings.is_production else str(exc)}
+    )
 
 if __name__ == "__main__":
     import uvicorn

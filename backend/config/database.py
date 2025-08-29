@@ -1,69 +1,99 @@
 import os
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 import logging
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from contextlib import contextmanager
 
-from models.user import Base
-from config.settings import Settings
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
+
+Base = declarative_base()
 
 class DatabaseManager:
 
     def __init__(self):
-        self.settings = Settings()
         self.engine = None
         self.SessionLocal = None
-        self.setup_database()
+        self._setup_database()
     
-    def setup_database(self):
-        database_url = self.settings.database_url
+    def _setup_database(self):
+        """Set up database connection based on environment"""
         
-        if database_url.startswith("sqlite"):
-            # SQLite setup (development)
+        database_url = settings.database_url
+        
+        if settings.is_production:
+            # PRODUCTION: PostgreSQL configuration
+            logger.info("🌐 Connecting to AWS RDS PostgreSQL")
+            
+            # PostgreSQL-specific settings for production
             self.engine = create_engine(
                 database_url,
-                connect_args={"check_same_thread": False},  # SQLite specific
-                poolclass=StaticPool
+                pool_pre_ping=True,          # Test connections before use
+                pool_recycle=3600,           # Refresh connections every hour
+                pool_size=5,                 # Keep 5 connections ready
+                max_overflow=10,             # Allow up to 15 total connections
+                echo=False                   # Don't log SQL queries
             )
-            logger.info("🗄️  Using SQLite database for development")
         else:
-            # PostgreSQL setup (production)
+            # DEVELOPMENT: SQLite configuration
+            logger.info("💻 Connecting to local SQLite database")
+            
+            # SQLite-specific settings for development
             self.engine = create_engine(
                 database_url,
-                pool_size=10,
-                max_overflow=20,
-                pool_pre_ping=True
+                connect_args={"check_same_thread": False},  # Allow multiple threads
+                echo=False
             )
-            logger.info("🗄️  Using PostgreSQL database for production")
         
         # Create session factory
-        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
-        
-        # Create all tables
-        self.create_tables()
+        self.SessionLocal = sessionmaker(
+            autocommit=False,
+            autoflush=False,
+            bind=self.engine
+        )
+
+        logger.info(f"✅ Database connection established")
     
     def create_tables(self):
-        """Create all user tables if they don't exist."""
+        """Create all database tables"""
         try:
+            # Import models so SQLAlchemy knows about them
+            from models.user import User, UserSession, UserBudget
+            
+            # Create all tables
             Base.metadata.create_all(bind=self.engine)
-            logger.info("✅ User database tables created/verified")
+            logger.info("✅ Database tables created/verified")
+            
         except Exception as e:
-            logger.error(f"❌ Failed to create database tables: {e}")
+            logger.error(f"❌ Error creating database tables: {e}")
             raise
     
+    @contextmanager
+    def get_session_context(self):
+        """
+        Database session with automatic cleanup
+        
+        USAGE IN OUR APP:
+        with db_manager.get_session_context() as db:
+            user = db.query(User).filter(User.email == "test@example.com").first()
+        # Session automatically closed
+        """
+        session = self.SessionLocal()
+        try:
+            yield session
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Database session error: {e}")
+            raise
+        finally:
+            session.close()
+
     def get_session(self):
-        """
-        Get a database session for operations.
-        """
+        """Get a single database session"""
         return self.SessionLocal()
-    
-    def close(self):
-        """Close database connections."""
-        if self.engine:
-            self.engine.dispose()
-            logger.info("🔒 Database connections closed")
 
 # Global database manager instance
 db_manager = DatabaseManager()
@@ -82,3 +112,9 @@ def get_db():
         yield db
     finally:
         db.close()
+
+# Initialize tables when module is imported
+try:
+    db_manager.create_tables()
+except Exception as e:
+    logger.warning(f"Could not create tables on import: {e}")

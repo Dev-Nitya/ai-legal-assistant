@@ -1,5 +1,5 @@
 from fastapi.responses import JSONResponse
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import Depends, APIRouter, BackgroundTasks, HTTPException, Request
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_openai_tools_agent, AgentExecutor
 from langchain_core.prompts import ChatPromptTemplate
@@ -7,6 +7,9 @@ from typing import List, Dict
 import time
 import logging
 
+from requests import Session
+
+from backend.config.database import get_db
 from schemas.chat import EnhancedChatRequest, EnhancedChatResponse
 from schemas.errors import ValidationErrorResponse
 from chain.loader import vectorstore
@@ -54,7 +57,10 @@ Answer the user's question comprehensively using the above context in HTML forma
 """
 
 @router.post("/enhanced-chat", response_model=EnhancedChatResponse)
-async def enhanced_chat(request: EnhancedChatRequest):
+async def enhanced_chat(
+    request: EnhancedChatRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)):
     start_time = time.time()
 
     try:
@@ -72,29 +78,20 @@ async def enhanced_chat(request: EnhancedChatRequest):
         query_analysis = query_processor.preprocess_query(request.question)
         print(f"Query Analysis: {query_analysis}")
 
-        # Step 3: Check cached vector search
-        cached_vectors = cache.get_cached_vector_search(request.question, request.filters or {})
-        if cached_vectors:
-            relevant_docs = cached_vectors
-            logger.info("📚 Using cached vector search results")
-        else:
-            # Step 4: Enhanced retrieval
-            if request.use_hybrid_search and enhanced_retriever:
-                # Use hybrid retriever with filters
-                filters = request.filters or query_analysis.get('filters', {})
-                relevant_docs = enhanced_retriever.retrieve_with_filters(
-                    query=request.question,
-                    filters=filters,
-                    k=5
-                )
-            else:
-                # Fallback to basic retrieval
-                retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-                relevant_docs = retriever.get_relevant_documents(request.question)
 
-            # Cache vector search results
-            doc_dicts = [{"content": doc.page_content, "metadata": doc.metadata} for doc in relevant_docs]
-            cache.cache_vector_search(request.question, request.filters or {}, doc_dicts)
+        # Step 4: Enhanced retrieval
+        if request.use_hybrid_search and enhanced_retriever:
+            # Use hybrid retriever with filters
+            filters = request.filters or query_analysis.get('filters', {})
+            relevant_docs = enhanced_retriever.retrieve_with_filters(
+                query=request.question,
+                filters=filters,
+                k=5
+        )
+        else:
+            # Fallback to basic retrieval
+            retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+            relevant_docs = retriever.get_relevant_documents(request.question)
 
         # Step 5: Calculate confidence based on retrieval quality
         confidence = calculate_confidence(relevant_docs, query_analysis)
@@ -198,7 +195,7 @@ async def enhanced_chat(request: EnhancedChatRequest):
         }
 
         # cache the response for future use
-        cache.cache_query_response(cache_key, response_data, ttl=1800)
+        cache.set_cached_query(cache_key, response_data, expire=1800)
         return EnhancedChatResponse(**response_data)
     
     except ValueError as e:
