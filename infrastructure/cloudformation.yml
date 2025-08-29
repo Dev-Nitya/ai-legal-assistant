@@ -354,18 +354,10 @@ Resources:
       Roles:
         - !Ref ApplicationRole
 
-  # ECS Cluster
-  ECSCluster:
-    Type: AWS::ECS::Cluster
-    Properties:
-      ClusterName: !Sub "ai-legal-assistant-${Environment}-${AWS::AccountId}"
-      ClusterSettings:
-        - Name: containerInsights
-          Value: enabled
-
   # CloudWatch Log Group
   LogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
     Properties:
       LogGroupName: !Sub "/aws/ecs/ai-legal-assistant-${Environment}-${AWS::AccountId}"
       RetentionInDays: 30
@@ -382,18 +374,6 @@ Outputs:
     Value: !GetAtt ApplicationRole.Arn
     Export:
       Name: !Sub "${AWS::StackName}-ApplicationRoleArn"
-  
-  ECSClusterName:
-    Description: ECS cluster name
-    Value: !Ref ECSCluster
-    Export:
-      Name: !Sub "${AWS::StackName}-ECSClusterName"
-
-  ECSClusterArn:
-    Description: ECS cluster ARN
-    Value: !GetAtt ECSCluster.Arn
-    Export:
-      Name: !Sub "${AWS::StackName}-ECSClusterArn"
 
   DatabaseEndpoint:
     Description: 'RDS PostgreSQL endpoint (in private subnet)'
