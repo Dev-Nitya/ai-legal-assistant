@@ -10,14 +10,29 @@ import {
   FiActivity as Activity,
   FiTrendingUp as TrendingUp,
   FiShield as Shield,
+  FiRefreshCw as RefreshCw,
 } from "react-icons/fi";
-import { useAuth } from "../contexts/AuthContext";
+import { useAuth } from "../hooks/useAuth";
+import { useBudgetRefresh } from "../hooks/useBudgetRefresh";
 
 const UserDashboard: React.FC = () => {
   const { user, logout } = useAuth();
+  const { refreshBudget } = useBudgetRefresh();
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  if (!user) return null;
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshBudget();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  if (!user) {
+    return null;
+  }
 
   const getTierIcon = (tier: string) => {
     switch (tier) {
@@ -82,14 +97,28 @@ const UserDashboard: React.FC = () => {
               </div>
             </div>
           </div>
-          <motion.button
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="text-white/80 hover:text-white transition-colors duration-200"
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
-          >
-            <Settings className="h-5 w-5" />
-          </motion.button>
+          <div className="flex items-center space-x-2">
+            <motion.button
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="text-white/80 hover:text-white transition-colors duration-200 disabled:opacity-50"
+              whileHover={!isRefreshing ? { scale: 1.1 } : {}}
+              whileTap={!isRefreshing ? { scale: 0.9 } : {}}
+              title="Refresh budget data"
+            >
+              <RefreshCw
+                className={`h-5 w-5 ${isRefreshing ? "animate-spin" : ""}`}
+              />
+            </motion.button>
+            <motion.button
+              onClick={() => setIsExpanded(!isExpanded)}
+              className="text-white/80 hover:text-white transition-colors duration-200"
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.9 }}
+            >
+              <Settings className="h-5 w-5" />
+            </motion.button>
+          </div>
         </div>
       </div>
 
@@ -142,23 +171,50 @@ const UserDashboard: React.FC = () => {
                       Daily Budget
                     </span>
                     <span className="text-gray-600 text-sm">
-                      {formatCurrency(user.budget_info.usage.daily_spent_usd)} /{" "}
-                      {formatCurrency(user.budget_info.limits.daily_limit_usd)}
+                      {formatCurrency(
+                        Math.max(
+                          0,
+                          user.budget_info.limits.daily_limit -
+                            user.budget_info.usage.daily_spent
+                        )
+                      )}{" "}
+                      / {formatCurrency(user.budget_info.limits.daily_limit)}
                     </span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-2">
                     <motion.div
-                      className="bg-gradient-to-r from-green-400 to-green-600 h-2 rounded-full"
+                      className={`h-2 rounded-full ${
+                        calculateUsagePercentage(
+                          user.budget_info.usage.daily_spent,
+                          user.budget_info.limits.daily_limit
+                        ) > 80
+                          ? "bg-gradient-to-r from-red-400 to-red-600"
+                          : calculateUsagePercentage(
+                              user.budget_info.usage.daily_spent,
+                              user.budget_info.limits.daily_limit
+                            ) > 60
+                          ? "bg-gradient-to-r from-yellow-400 to-yellow-600"
+                          : "bg-gradient-to-r from-green-400 to-green-600"
+                      }`}
                       initial={{ width: 0 }}
                       animate={{
                         width: `${calculateUsagePercentage(
-                          user.budget_info.usage.daily_spent_usd,
-                          user.budget_info.limits.daily_limit_usd
+                          user.budget_info.usage.daily_spent,
+                          user.budget_info.limits.daily_limit
                         )}%`,
                       }}
                       transition={{ duration: 1, ease: "easeOut" }}
                     />
                   </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Spent: {formatCurrency(user.budget_info.usage.daily_spent)}{" "}
+                    (
+                    {calculateUsagePercentage(
+                      user.budget_info.usage.daily_spent,
+                      user.budget_info.limits.daily_limit
+                    ).toFixed(1)}
+                    %)
+                  </p>
                 </div>
 
                 {/* Monthly Budget */}
@@ -168,26 +224,103 @@ const UserDashboard: React.FC = () => {
                       Monthly Budget
                     </span>
                     <span className="text-gray-600 text-sm">
-                      {formatCurrency(user.budget_info.usage.monthly_spent_usd)}{" "}
-                      /{" "}
                       {formatCurrency(
-                        user.budget_info.limits.monthly_limit_usd
-                      )}
+                        Math.max(
+                          0,
+                          user.budget_info.limits.monthly_limit -
+                            user.budget_info.usage.monthly_spent
+                        )
+                      )}{" "}
+                      / {formatCurrency(user.budget_info.limits.monthly_limit)}
                     </span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-2">
                     <motion.div
-                      className="bg-gradient-to-r from-blue-400 to-blue-600 h-2 rounded-full"
+                      className={`h-2 rounded-full ${
+                        calculateUsagePercentage(
+                          user.budget_info.usage.monthly_spent,
+                          user.budget_info.limits.monthly_limit
+                        ) > 80
+                          ? "bg-gradient-to-r from-red-400 to-red-600"
+                          : calculateUsagePercentage(
+                              user.budget_info.usage.monthly_spent,
+                              user.budget_info.limits.monthly_limit
+                            ) > 60
+                          ? "bg-gradient-to-r from-yellow-400 to-yellow-600"
+                          : "bg-gradient-to-r from-blue-400 to-blue-600"
+                      }`}
                       initial={{ width: 0 }}
                       animate={{
                         width: `${calculateUsagePercentage(
-                          user.budget_info.usage.monthly_spent_usd,
-                          user.budget_info.limits.monthly_limit_usd
+                          user.budget_info.usage.monthly_spent,
+                          user.budget_info.limits.monthly_limit
                         )}%`,
                       }}
                       transition={{ duration: 1, delay: 0.2, ease: "easeOut" }}
                     />
                   </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Spent:{" "}
+                    {formatCurrency(user.budget_info.usage.monthly_spent)} (
+                    {calculateUsagePercentage(
+                      user.budget_info.usage.monthly_spent,
+                      user.budget_info.limits.monthly_limit
+                    ).toFixed(1)}
+                    %)
+                  </p>
+                </div>
+
+                {/* Hourly Budget */}
+                <div className="bg-gray-50 p-4 rounded-xl">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-gray-700 font-medium">
+                      Hourly Budget
+                    </span>
+                    <span className="text-gray-600 text-sm">
+                      {formatCurrency(
+                        Math.max(
+                          0,
+                          user.budget_info.limits.hourly_limit -
+                            user.budget_info.usage.hourly_spent
+                        )
+                      )}{" "}
+                      / {formatCurrency(user.budget_info.limits.hourly_limit)}
+                    </span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <motion.div
+                      className={`h-2 rounded-full ${
+                        calculateUsagePercentage(
+                          user.budget_info.usage.hourly_spent,
+                          user.budget_info.limits.hourly_limit
+                        ) > 80
+                          ? "bg-gradient-to-r from-red-400 to-red-600"
+                          : calculateUsagePercentage(
+                              user.budget_info.usage.hourly_spent,
+                              user.budget_info.limits.hourly_limit
+                            ) > 60
+                          ? "bg-gradient-to-r from-yellow-400 to-yellow-600"
+                          : "bg-gradient-to-r from-purple-400 to-purple-600"
+                      }`}
+                      initial={{ width: 0 }}
+                      animate={{
+                        width: `${calculateUsagePercentage(
+                          user.budget_info.usage.hourly_spent,
+                          user.budget_info.limits.hourly_limit
+                        )}%`,
+                      }}
+                      transition={{ duration: 1, delay: 0.4, ease: "easeOut" }}
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Spent: {formatCurrency(user.budget_info.usage.hourly_spent)}{" "}
+                    (
+                    {calculateUsagePercentage(
+                      user.budget_info.usage.hourly_spent,
+                      user.budget_info.limits.hourly_limit
+                    ).toFixed(1)}
+                    %)
+                  </p>
                 </div>
               </div>
             ) : (
@@ -195,19 +328,27 @@ const UserDashboard: React.FC = () => {
                 <div className="bg-gray-50 p-4 rounded-xl">
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
+                      <span className="text-gray-600">Hourly Limit:</span>
+                      <p className="font-semibold text-gray-800">
+                        {formatCurrency(user.budget_limits.hourly || 0)}
+                      </p>
+                    </div>
+                    <div>
                       <span className="text-gray-600">Daily Limit:</span>
                       <p className="font-semibold text-gray-800">
-                        {formatCurrency(
-                          user.budget_limits.daily_limit_usd || 0
-                        )}
+                        {formatCurrency(user.budget_limits.daily || 0)}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">Weekly Limit:</span>
+                      <p className="font-semibold text-gray-800">
+                        {formatCurrency(user.budget_limits.weekly || 0)}
                       </p>
                     </div>
                     <div>
                       <span className="text-gray-600">Monthly Limit:</span>
                       <p className="font-semibold text-gray-800">
-                        {formatCurrency(
-                          user.budget_limits.monthly_limit_usd || 0
-                        )}
+                        {formatCurrency(user.budget_limits.monthly || 0)}
                       </p>
                     </div>
                   </div>

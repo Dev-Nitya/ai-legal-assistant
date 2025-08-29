@@ -42,6 +42,8 @@ def validate_legal_question(question: str) -> str:
             "Question should contain legal context or terminology"
         )
     
+    return cleaned_question
+    
 def _has_legal_context(text: str) -> bool:
     """
     Check if text contains legal context indicators.

@@ -122,8 +122,9 @@ class EnhancedChatRequest(BaseRequestModel):
         
     @model_validator(mode='after')
     def validate_request_combination(cls, values):
-        use_hybrid = values.get('use_hybrid_search', True)
-        filters = values.get('filters')
+        print(f"Validating combined request values: {values}")
+        use_hybrid = values.use_hybrid_search
+        filters = values.filters
         
         if filters and not use_hybrid:
             complex_filters = any(key in filters for key in ['legal_topics', 'jurisdiction'])

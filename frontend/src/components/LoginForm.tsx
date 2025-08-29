@@ -5,10 +5,9 @@ import {
   FiLock as Lock,
   FiLogIn as LogIn,
   FiUserPlus as UserPlus,
-  FiAlertCircle as AlertCircle,
   FiLoader as Loader2,
 } from "react-icons/fi";
-import { useAuth } from "../contexts/AuthContext";
+import { useAuth } from "../hooks/useAuth";
 import type { AuthRequest, RegisterRequest, UserTier } from "../types";
 
 interface LoginFormProps {
@@ -23,12 +22,10 @@ const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
     full_name: "",
     tier: "free" as UserTier,
   });
-  const [error, setError] = useState<string | null>(null);
   const { login, register, isLoading } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
 
     try {
       if (isLogin) {
@@ -48,7 +45,8 @@ const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
       }
       onSuccess?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred");
+      // Error handling is now done in AuthContext with toast notifications
+      console.error("Auth error:", err);
     }
   };
 
@@ -87,17 +85,6 @@ const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
             : "Join the AI Legal Assistant platform"}
         </p>
       </div>
-
-      {error && (
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl flex items-center space-x-3 text-red-700"
-        >
-          <AlertCircle className="h-5 w-5 flex-shrink-0" />
-          <span className="text-sm font-medium">{error}</span>
-        </motion.div>
-      )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {!isLogin && (
@@ -221,7 +208,6 @@ const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
           type="button"
           onClick={() => {
             setIsLogin(!isLogin);
-            setError(null);
             setFormData({
               email: "",
               password: "",

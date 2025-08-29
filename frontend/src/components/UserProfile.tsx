@@ -150,17 +150,13 @@ const UserProfile: React.FC<UserProfileProps> = ({
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-600">Daily Limit</span>
                   <span className="font-medium">
-                    $
-                    {user.budget_info?.limits.daily_limit_usd.toFixed(2) ||
-                      "0.00"}
+                    ${user.budget_info?.limits.daily_limit.toFixed(2) || "0.00"}
                   </span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-600">Daily Spent</span>
                   <span className="font-medium text-red-600">
-                    $
-                    {user.budget_info?.usage.daily_spent_usd.toFixed(2) ||
-                      "0.00"}
+                    ${user.budget_info?.usage.daily_spent.toFixed(2) || "0.00"}
                   </span>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-2">
@@ -168,8 +164,8 @@ const UserProfile: React.FC<UserProfileProps> = ({
                     className="bg-blue-600 h-2 rounded-full transition-all duration-300"
                     style={{
                       width: `${Math.min(
-                        ((user.budget_info?.usage.daily_spent_usd || 0) /
-                          (user.budget_info?.limits.daily_limit_usd || 1)) *
+                        ((user.budget_info?.usage.daily_spent || 0) /
+                          (user.budget_info?.limits.daily_limit || 1)) *
                           100,
                         100
                       )}%`,
@@ -183,7 +179,7 @@ const UserProfile: React.FC<UserProfileProps> = ({
                   <span className="text-gray-600">Monthly Limit</span>
                   <span className="font-medium">
                     $
-                    {user.budget_info?.limits.monthly_limit_usd.toFixed(2) ||
+                    {user.budget_info?.limits.monthly_limit.toFixed(2) ||
                       "0.00"}
                   </span>
                 </div>
@@ -191,8 +187,7 @@ const UserProfile: React.FC<UserProfileProps> = ({
                   <span className="text-gray-600">Monthly Spent</span>
                   <span className="font-medium text-red-600">
                     $
-                    {user.budget_info?.usage.monthly_spent_usd.toFixed(2) ||
-                      "0.00"}
+                    {user.budget_info?.usage.monthly_spent.toFixed(2) || "0.00"}
                   </span>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-2">
@@ -200,8 +195,8 @@ const UserProfile: React.FC<UserProfileProps> = ({
                     className="bg-green-600 h-2 rounded-full transition-all duration-300"
                     style={{
                       width: `${Math.min(
-                        ((user.budget_info?.usage.monthly_spent_usd || 0) /
-                          (user.budget_info?.limits.monthly_limit_usd || 1)) *
+                        ((user.budget_info?.usage.monthly_spent || 0) /
+                          (user.budget_info?.limits.monthly_limit || 1)) *
                           100,
                         100
                       )}%`,

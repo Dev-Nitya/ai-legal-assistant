@@ -4,13 +4,9 @@ from datetime import datetime
 import enum
 import uuid
 
-Base = declarative_base()
+from config.cost_limits import UserTier
 
-class UserTier(enum.Enum):
-    FREE = "free"
-    BASIC = "basic"
-    PREMIUM = "premium"
-    ENTERPRISE = "enterprise"
+Base = declarative_base()
 
 class User(Base):
     __tablename__ = 'users'

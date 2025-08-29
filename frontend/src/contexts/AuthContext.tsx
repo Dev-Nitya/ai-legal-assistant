@@ -6,6 +6,8 @@ import type {
   AuthRequest,
   RegisterRequest,
 } from "../types";
+import { useToast } from "../components/Toast";
+import { cookieUtils } from "../utils/cookies";
 
 interface AuthContextType {
   user: User | null;
@@ -38,27 +40,63 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const toast = useToast();
 
   const isAuthenticated = !!user && !!token;
 
-  // Initialize auth state from localStorage
+  // Save auth data to both localStorage and cookies
+  const saveAuthData = (authToken: string, userData: User) => {
+    // Save to localStorage
+    localStorage.setItem("auth_token", authToken);
+    localStorage.setItem("user_data", JSON.stringify(userData));
+
+    // Save to cookies as backup (7 days expiration)
+    if (cookieUtils.isEnabled()) {
+      cookieUtils.set("auth_token", authToken, 7);
+      cookieUtils.set("user_data", JSON.stringify(userData), 7);
+    }
+  };
+
+  // Remove auth data from both localStorage and cookies
+  const clearAuthData = () => {
+    localStorage.removeItem("auth_token");
+    localStorage.removeItem("user_data");
+
+    if (cookieUtils.isEnabled()) {
+      cookieUtils.remove("auth_token");
+      cookieUtils.remove("user_data");
+    }
+  };
+
+  // Initialize auth state from localStorage or cookies
   useEffect(() => {
-    const savedToken = localStorage.getItem("auth_token");
-    const savedUser = localStorage.getItem("user_data");
+    let savedToken = localStorage.getItem("auth_token");
+    let savedUser = localStorage.getItem("user_data");
+
+    // Fallback to cookies if localStorage is empty
+    if (!savedToken && cookieUtils.isEnabled()) {
+      savedToken = cookieUtils.get("auth_token");
+      savedUser = cookieUtils.get("user_data");
+    }
 
     if (savedToken && savedUser) {
       try {
         const userData = JSON.parse(savedUser);
         setToken(savedToken);
         setUser(userData);
+
+        // Sync data to both storage methods if missing
+        if (localStorage.getItem("auth_token") !== savedToken) {
+          saveAuthData(savedToken, userData);
+        }
       } catch (error) {
         console.error("Error parsing saved user data:", error);
-        localStorage.removeItem("auth_token");
-        localStorage.removeItem("user_data");
+        clearAuthData();
+        toast.error("Session data was corrupted and has been cleared");
       }
     }
     setIsLoading(false);
-  }, []);
+  }, [toast]);
 
   const login = async (credentials: AuthRequest): Promise<void> => {
     setIsLoading(true);
@@ -73,7 +111,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.detail || "Login failed");
+        const errorMessage = errorData.detail || "Login failed";
+        toast.error(errorMessage);
+        throw new Error(errorMessage);
       }
 
       const data: AuthResponse = await response.json();
@@ -81,9 +121,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setToken(data.access_token);
       setUser(data.user);
 
-      // Save to localStorage
-      localStorage.setItem("auth_token", data.access_token);
-      localStorage.setItem("user_data", JSON.stringify(data.user));
+      // Save auth data to both storage methods
+      saveAuthData(data.access_token, data.user);
+
+      toast.success(`Welcome back, ${data.user.full_name}!`);
     } catch (error) {
       console.error("Login error:", error);
       throw error;
@@ -105,7 +146,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.detail || "Registration failed");
+        const errorMessage = errorData.detail || "Registration failed";
+        toast.error(errorMessage);
+        throw new Error(errorMessage);
       }
 
       const data: AuthResponse = await response.json();
@@ -113,9 +156,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setToken(data.access_token);
       setUser(data.user);
 
-      // Save to localStorage
-      localStorage.setItem("auth_token", data.access_token);
-      localStorage.setItem("user_data", JSON.stringify(data.user));
+      // Save auth data to both storage methods
+      saveAuthData(data.access_token, data.user);
+
+      toast.success(
+        `Welcome to AI Legal Assistant, ${data.user.full_name}! Your account has been created successfully.`
+      );
     } catch (error) {
       console.error("Registration error:", error);
       throw error;
@@ -135,12 +181,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       });
 
       if (!response.ok) {
+        toast.error("Failed to refresh profile. Please log in again.");
         throw new Error("Failed to fetch profile");
       }
 
       const userData = await response.json();
       setUser(userData);
+
+      // Update stored user data
       localStorage.setItem("user_data", JSON.stringify(userData));
+      if (cookieUtils.isEnabled()) {
+        cookieUtils.set("user_data", JSON.stringify(userData), 7);
+      }
+
+      toast.success("Profile updated successfully");
     } catch (error) {
       console.error("Profile refresh error:", error);
       // If profile fetch fails, user might need to re-authenticate
@@ -151,8 +205,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const logout = (): void => {
     setUser(null);
     setToken(null);
-    localStorage.removeItem("auth_token");
-    localStorage.removeItem("user_data");
+    clearAuthData();
+    toast.info("You have been logged out successfully");
   };
 
   const value: AuthContextType = {

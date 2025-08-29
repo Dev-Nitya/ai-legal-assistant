@@ -3,6 +3,9 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import logging
 import asyncio
+import traceback
+import sys
+import numpy as np
 from datetime import datetime
 
 # Import our evaluation components
@@ -16,6 +19,22 @@ from routes.enhanced_chat import enhanced_chat
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+def convert_numpy_types(obj):
+    """
+    Convert NumPy types to native Python types for JSON serialization.
+    """
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {key: convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(item) for item in obj]
+    return obj
 
 class SingleEvaluationRequest(BaseModel):
     """
@@ -85,10 +104,10 @@ async def evaluate_single_question(request: SingleEvaluationRequest):
     try:
         # Step 1: Run the question through your RAG system
         # This reuses your existing enhanced chat logic
-        logger.debug("Running question through RAG pipeline...")
+        print("Running question through RAG pipeline...")
         
         # Use your existing retrieval system to find relevant documents
-        retrieved_docs = await enhanced_retriever.retrieve_with_filters(
+        retrieved_docs = enhanced_retriever.retrieve_with_filters(
             query=request.question,
             filters=None,
             k=5  # Get top 5 most relevant documents
@@ -135,31 +154,54 @@ async def evaluate_single_question(request: SingleEvaluationRequest):
         )
         
         generated_answer = result["response"]
-        logger.debug(f"Generated answer: {generated_answer[:200]}...")
-        
-        # Step 3: Evaluate the quality of the response
-        logger.debug("Evaluating response quality...")
+
+        # # Step 3: Convert retrieved docs to standard format for evaluation
+        # # The RAG evaluator expects documents in a specific format
+        # standardized_docs = []
+        # for doc in retrieved_docs:
+        #     if hasattr(doc, 'page_content'):
+        #         # LangChain Document format
+        #         standardized_docs.append({
+        #             'content': doc.page_content,
+        #             'metadata': getattr(doc, 'metadata', {})
+        #         })
+        #     elif isinstance(doc, dict):
+        #         # Already in dict format
+        #         content = doc.get('content', '') or doc.get('text', '') or doc.get('page_content', '')
+        #         standardized_docs.append({
+        #             'content': content,
+        #             'metadata': doc.get('metadata', {})
+        #         })
+        #     else:
+        #         # String or other format
+        #         standardized_docs.append({
+        #             'content': str(doc),
+        #             'metadata': {}
+        #         })
+
+        # Step 4: Evaluate the quality of the response
         evaluation_result = await rag_evaluator.evaluate_rag_response(
+            user_id=request.user_id,
             question=request.question,
             retrieved_documents=retrieved_docs,
             generated_answer=generated_answer,
             ground_truth_answer=request.ground_truth_answer if request.use_ground_truth else None
         )
         
-        # Step 4: Calculate processing time
+        # Step 5: Calculate processing time
         end_time = datetime.utcnow()
         processing_time = (end_time - start_time).total_seconds()
         
-        # Step 5: Format the response
+        # Step 6: Format the response
         response = EvaluationResponse(
             question=request.question,
             generated_answer=generated_answer,
             evaluation_result={
-                "retrieval_precision_at_3": evaluation_result.retrieval_precision_at_3,
-                "retrieval_precision_at_5": evaluation_result.retrieval_precision_at_5,
-                "answer_relevance": evaluation_result.answer_relevance,
-                "answer_faithfulness": evaluation_result.answer_faithfulness,
-                "overall_score": evaluation_result.overall_score
+                "retrieval_precision_at_3": float(evaluation_result.retrieval_precision_at_3),
+                "retrieval_precision_at_5": float(evaluation_result.retrieval_precision_at_5),
+                "answer_relevance": float(evaluation_result.answer_relevance),
+                "answer_faithfulness": float(evaluation_result.answer_faithfulness),
+                "overall_score": float(evaluation_result.overall_score)
             },
             retrieved_documents_count=len(retrieved_docs),
             processing_time_seconds=processing_time,
@@ -170,7 +212,23 @@ async def evaluate_single_question(request: SingleEvaluationRequest):
         return response
         
     except Exception as e:
-        logger.error(f"❌ Error in single question evaluation: {e}")
+        # Get detailed error information including line number
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        
+        # Get the line number where the error occurred
+        if exc_traceback:
+            tb_list = traceback.extract_tb(exc_traceback)
+            # Get the last frame (most recent call)
+            last_frame = tb_list[-1]
+            error_line = last_frame.lineno
+            error_filename = last_frame.filename
+            error_function = last_frame.name
+            
+            logger.error(f"❌ Error in single question evaluation at line {error_line} in {error_function}(): {e}")
+            logger.error(f"Full traceback:\n{''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))}")
+        else:
+            logger.error(f"❌ Error in single question evaluation: {e}")
+            
         raise HTTPException(status_code=500, detail=f"Evaluation failed: {str(e)}")
 
 @router.post("/evaluate/batch", response_model=BatchEvaluationResponse)
@@ -263,7 +321,7 @@ async def evaluate_batch_questions(request: BatchEvaluationRequest):
         average_scores = {}
         for metric, scores in all_scores.items():
             if scores:  # Only calculate if we have scores
-                average_scores[metric] = sum(scores) / len(scores)
+                average_scores[metric] = float(sum(scores) / len(scores))
             else:
                 average_scores[metric] = 0.0
         
@@ -273,7 +331,7 @@ async def evaluate_batch_questions(request: BatchEvaluationRequest):
             category_breakdown[category] = {}
             for metric, metric_scores in scores.items():
                 if metric_scores:
-                    category_breakdown[category][metric] = sum(metric_scores) / len(metric_scores)
+                    category_breakdown[category][metric] = float(sum(metric_scores) / len(metric_scores))
                 else:
                     category_breakdown[category][metric] = 0.0
         
@@ -292,14 +350,16 @@ async def evaluate_batch_questions(request: BatchEvaluationRequest):
                                            key=lambda k: category_breakdown[k]["overall_score"]) if category_breakdown else None
         }
         
-        # Step 5: Create the response
-        response = BatchEvaluationResponse(
-            total_questions_tested=len(individual_results),
-            average_scores=average_scores,
-            individual_results=individual_results,
-            category_breakdown=category_breakdown,
-            summary=summary
-        )
+        # Step 5: Create the response with NumPy type conversion
+        response_data = {
+            "total_questions_tested": len(individual_results),
+            "average_scores": convert_numpy_types(average_scores),
+            "individual_results": [convert_numpy_types(result.dict()) for result in individual_results],
+            "category_breakdown": convert_numpy_types(category_breakdown),
+            "summary": convert_numpy_types(summary)
+        }
+        
+        response = BatchEvaluationResponse(**response_data)
         
         logger.info(f"✅ Batch evaluation complete. Tested {len(individual_results)} questions. "
                    f"Average overall score: {average_scores.get('overall_score', 0):.3f}")
@@ -307,7 +367,23 @@ async def evaluate_batch_questions(request: BatchEvaluationRequest):
         return response
         
     except Exception as e:
-        logger.error(f"❌ Error in batch evaluation: {e}")
+        # Get detailed error information including line number
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        
+        # Get the line number where the error occurred
+        if exc_traceback:
+            tb_list = traceback.extract_tb(exc_traceback)
+            # Get the last frame (most recent call)
+            last_frame = tb_list[-1]
+            error_line = last_frame.lineno
+            error_filename = last_frame.filename
+            error_function = last_frame.name
+            
+            logger.error(f"❌ Error in batch evaluation at line {error_line} in {error_function}(): {e}")
+            logger.error(f"Full traceback:\n{''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))}")
+        else:
+            logger.error(f"❌ Error in batch evaluation: {e}")
+            
         raise HTTPException(status_code=500, detail=f"Batch evaluation failed: {str(e)}")
 
 @router.get("/evaluate/dataset/stats")

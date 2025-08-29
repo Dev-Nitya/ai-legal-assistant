@@ -94,7 +94,7 @@ class CostMonitoringMiddleware(BaseHTTPMiddleware):
                 return await call_next(request)
             
             # Step 3: How much will this request cost?
-            estimated_cost = await self._estimate_request_cost(request)
+            estimated_cost, request_body = await self._estimate_request_cost_and_preserve_body(request)
             
             # Step 4: Can this user afford this request?
             can_afford, reason = cost_monitoring_service.can_user_afford_this_request(
@@ -107,6 +107,11 @@ class CostMonitoringMiddleware(BaseHTTPMiddleware):
                 return self._create_budget_exceeded_response(estimated_cost, reason)
 
             logger.info(f"Budget check passed for user {user_id}: ${estimated_cost['total_cost']:.4f}")
+            
+            # Recreate the request with the preserved body
+            if request_body is not None:
+                request = await self._recreate_request_with_body(request, request_body)
+            
             response = await call_next(request)
 
             self._add_cost_info_to_response(response, estimated_cost)
@@ -192,6 +197,97 @@ class CostMonitoringMiddleware(BaseHTTPMiddleware):
         logger.warning("Cannot identify user for budget tracking")
         return None
 
+    async def _estimate_request_cost_and_preserve_body(self, request: Request) -> Tuple[Optional[Dict[str, Any]], Optional[bytes]]:
+        """
+        Estimate how much this AI request will cost while preserving the request body.
+        
+        This version reads the body once and returns both the cost estimate and the body
+        so we can recreate the request for the route handler.
+        
+        Args:
+            request: The HTTP request containing user's question
+            
+        Returns:
+            Tuple of (cost_estimate, request_body_bytes)
+        """
+        try:
+            # Step 1: Get the request content (only read once)
+            body_bytes = await request.body()
+            if not body_bytes:
+                logger.warning("Empty request body, cannot estimate cost")
+                return None, None
+            
+            # Parse the JSON
+            try:
+                request_body = json.loads(body_bytes)
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON in request body: {e}")
+                return None, body_bytes  # Still preserve the body even if we can't parse it
+            
+            # Step 2: Extract the text that will be sent to OpenAI
+            user_question = request_body.get("question", "")
+            if not user_question:
+                logger.warning("No 'question' field in request body, cannot estimate cost")
+                return None, body_bytes
+            
+            # Step 3: Which AI model will be used?
+            ai_model = request_body.get("model", "gpt-3.5-turbo")
+
+            # Step 4: Estimate response length based on question complexity
+            estimated_response_tokens = self._estimate_response_length(user_question, ai_model)
+            print(f"Estimated response tokens: {estimated_response_tokens}")
+
+            # Step 5: Use token_calculator to get detailed cost estimation
+            cost_estimate = token_calculator.estimate_cost_detailed(
+                input_text=user_question,
+                model=ai_model,
+                estimated_output_tokens=estimated_response_tokens
+            )
+        
+            return cost_estimate, body_bytes
+        
+        except Exception as e:
+            logger.error(f"Error estimating request cost: {e}")
+            # Try to get the body even if cost estimation fails
+            try:
+                body_bytes = await request.body()
+                return None, body_bytes
+            except:
+                return None, None
+
+    async def _recreate_request_with_body(self, original_request: Request, body_bytes: bytes) -> Request:
+        """
+        Recreate the request with the preserved body so the route handler can read it.
+        
+        Args:
+            original_request: The original request
+            body_bytes: The preserved request body
+            
+        Returns:
+            New request with the body available for reading
+        """
+        from fastapi import Request
+        from starlette.datastructures import Headers
+        import io
+        
+        # Create a new scope with the body
+        scope = original_request.scope.copy()
+        
+        # Create a readable stream from the preserved body
+        body_stream = io.BytesIO(body_bytes)
+        
+        # Create a new receive callable that provides the body
+        async def receive():
+            return {
+                "type": "http.request",
+                "body": body_bytes,
+                "more_body": False
+            }
+        
+        # Create new request with the body
+        new_request = Request(scope, receive)
+        return new_request
+
     async def _estimate_request_cost(self, request: Request) -> Optional[Dict[str, Any]]:
         """
         Estimate how much this AI request will cost.
@@ -225,7 +321,8 @@ class CostMonitoringMiddleware(BaseHTTPMiddleware):
             ai_model = request_body.get("model", "gpt-3.5-turbo")
 
             # Step 4: Estimate response length based on question complexity
-            estimated_response_tokens = self._estimate_response_length(user_question)
+            estimated_response_tokens = self._estimate_response_length(user_question, ai_model)
+            print(f"Estimated response tokens: {estimated_response_tokens}")
 
             # Step 5: Use token_calculator to get detailed cost estimation
             cost_estimate = token_calculator.estimate_cost_detailed(
@@ -233,8 +330,6 @@ class CostMonitoringMiddleware(BaseHTTPMiddleware):
                 model=ai_model,
                 estimated_output_tokens=estimated_response_tokens
             )
-
-            logger.debug(f"Smart cost estimate: ${cost_estimate['total_cost_usd']:.6f} for {ai_model}")
         
             return cost_estimate
         
@@ -271,7 +366,7 @@ class CostMonitoringMiddleware(BaseHTTPMiddleware):
 
         estimated_tokens = max(min_response, min(max_response, base_response_tokens))
     
-        logger.debug(f"Smart response estimate: {estimated_tokens} tokens for {input_tokens} input tokens")
+        logger.info(f"Smart response estimate for model {model}: {estimated_tokens} tokens for {input_tokens} input tokens")
     
         return int(estimated_tokens)
 

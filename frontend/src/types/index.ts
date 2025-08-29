@@ -7,13 +7,13 @@ export type DocumentType = 'case_law' | 'statute' | 'regulation' | 'constitution
 
 export interface BudgetInfo {
   limits: {
-    daily_limit_usd: number;
-    monthly_limit_usd: number;
+    daily_limit: number;
+    monthly_limit: number;
     hourly_limit: number;
   };
   usage: {
-    daily_spent_usd: number;
-    monthly_spent_usd: number;
+    daily_spent: number;
+    monthly_spent: number;
     hourly_spent: number;
   };
 }

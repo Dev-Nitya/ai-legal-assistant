@@ -7,7 +7,7 @@ from sentence_transformers import SentenceTransformer
 import json
 from datetime import datetime
 
-from services.openai_service import OpenAIService
+from services.openai_service import openai_service
 from utils.token_calculator import count_tokens
 
 logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ class RAGEvaluator:
         self.similarity_model = SentenceTransformer('all-MiniLM-L6-v2')
         logger.info("RAG Evaluator initialized with similarity model")
 
-    async def evaluate_rag_response(self, question: str, retrieved_documents: List[Dict[str, Any]],
+    async def evaluate_rag_response(self, user_id:str, question: str, retrieved_documents: List[Dict[str, Any]],
                                     generated_answer: str, ground_truth_answer: Optional[str] = None) -> EvaluationResult:
         """
         Evaluate a complete RAG response (the main method you'll use)
@@ -71,13 +71,14 @@ class RAGEvaluator:
         
         # Step 1: Evaluate retrieval quality
         # "Did we find relevant documents for this question?"
-        retrieval_scores = await self._evaluate_retrieval_quality(
+        retrieval_scores = self._evaluate_retrieval_quality(
             question, retrieved_documents
         )
 
         # Step 2: Evaluate answer relevance
         # "Does your answer actually address the question?"
         relevance_score = await self._evaluate_answer_relevance(
+            user_id,
             question,
             generated_answer,
             ground_truth_answer
@@ -86,23 +87,23 @@ class RAGEvaluator:
         # Step 3: Evaluate answer faithfulness
         # "Did we stick to facts from the retrieved documents?"
         faithfulness_score = await self._evaluate_answer_faithfulness(
-            generated_answer, retrieved_documents
+            user_id, generated_answer, retrieved_documents
         )
 
         # Step 4: Calculate overall score
-        overall_score = np.mean([
+        overall_score = float(np.mean([
             retrieval_scores['precision_at_3'],
             retrieval_scores['precision_at_5'],
             relevance_score,
             faithfulness_score
-        ])
+        ]))
 
         # Step 5: Create the final result
         result = EvaluationResult(
-            retrieval_precision_at_3=retrieval_scores["precision_at_3"],
-            retrieval_precision_at_5=retrieval_scores["precision_at_5"],
-            answer_relevance=relevance_score,
-            answer_faithfulness=faithfulness_score,
+            retrieval_precision_at_3=float(retrieval_scores["precision_at_3"]),
+            retrieval_precision_at_5=float(retrieval_scores["precision_at_5"]),
+            answer_relevance=float(relevance_score),
+            answer_faithfulness=float(faithfulness_score),
             overall_score=overall_score,
             retrieved_doc_count=len(retrieved_documents),
             answer_length_tokens=count_tokens(generated_answer, "gpt-3.5-turbo"),
@@ -112,7 +113,7 @@ class RAGEvaluator:
         logger.info(f"✅ Evaluation complete. Overall score: {overall_score:.3f}")
         return result
 
-    async def _evaluate_retrieval_quality(self, question: str, retrieved_documents: List[Dict[str, Any]]) -> Dict[str, float]:
+    def _evaluate_retrieval_quality(self, question: str, retrieved_documents: List[Dict[str, Any]]) -> Dict[str, float]:
         """
         Grade the quality of document retrieval.
         
@@ -178,7 +179,7 @@ class RAGEvaluator:
             "precision_at_5": float(precision_at_5)
         }
     
-    async def _evaluate_answer_relevance(self, question: str, answer: str, ground_truth_answer: Optional[str] = None) -> float:
+    async def _evaluate_answer_relevance(self, user_id:str, question: str, answer: str, ground_truth_answer: Optional[str] = None) -> float:
         """
         Grade how well the answer addresses the user's question.
         
@@ -232,9 +233,9 @@ class RAGEvaluator:
             """
 
             try:
-                result = await OpenAIService().simple_chat(
+                result = await openai_service.simple_chat(
                     question=evaluation_prompt,
-                    user_id="rag_evaluator",
+                    user_id=user_id,
                     model="gpt-3.5-turbo"
                 )
 
@@ -253,6 +254,7 @@ class RAGEvaluator:
                 return self._simple_keyword_relevance(question, answer)
             
     async def _evaluate_answer_faithfulness(self, 
+                                            user_id:str,
                                             answer: str, 
                                             retrieved_documents: List[Dict[str, Any]]) -> float: 
         """
@@ -314,9 +316,9 @@ class RAGEvaluator:
             """
             
         try:
-            result = OpenAIService().simple_chat(
+            result = await openai_service.simple_chat(
                 question=faithfulness_prompt,
-                user_id="rag_evaluator",
+                user_id=user_id,
                 model="gpt-3.5-turbo"
             )
 

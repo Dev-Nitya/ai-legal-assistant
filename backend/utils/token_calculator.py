@@ -148,10 +148,10 @@ class TokenCalculator:
         if not pricing:
             logger.error(f"No pricing found for model: {model}")
             return self._create_error_cost_estimate(input_tokens, estimated_output_tokens, model)
-
+        
         # Calculate costs
-        input_cost = (input_tokens / 1000) * pricing.get("input_per_1k", 0.0)
-        output_cost = (estimated_output_tokens / 1000) * pricing.get("output_per_1k", 0.0)
+        input_cost = (input_tokens / 1000) * pricing.get("input_cost_per_1k", 0.0)
+        output_cost = (estimated_output_tokens / 1000) * pricing.get("output_cost_per_1k", 0.0)
         total_cost = input_cost + output_cost
 
         # Create detailed breakdown
@@ -162,6 +162,7 @@ class TokenCalculator:
             "input_cost_usd": round(input_cost, 6),
             "output_cost_usd": round(output_cost, 6),
             "total_cost_usd": round(total_cost, 6),
+            "total_cost": round(total_cost, 6),  # Add this for middleware compatibility
             "model": model,
             "pricing_per_1k": {
                 "input": pricing["input_cost_per_1k"],

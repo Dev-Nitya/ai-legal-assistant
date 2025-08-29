@@ -19,18 +19,14 @@ import LoginForm from "./components/LoginForm";
 import UserDashboard from "./components/UserDashboard";
 import AdvancedChatSettings from "./components/AdvancedChatSettings";
 import EvaluationInterface from "./components/EvaluationInterface";
-import { useChatAPI } from "./hooks/useChatAPI";
-import { AuthProvider, useAuth } from "./contexts/AuthContext";
-import type {
-  Message,
-  ComplexityLevel,
-  DocumentFilters,
-  SourceDocument as SourceDocumentType,
-} from "./types";
+import { useEnhancedChatWithBudget } from "./hooks/useEnhancedChatWithBudget";
+import { AuthProvider, useAuth } from "./hooks/useAuth";
+import { ToastProvider } from "./components/Toast";
+import type { Message, ComplexityLevel, DocumentFilters } from "./types";
 
 // Separate MainApp component to use auth context
 const MainApp: React.FC = () => {
-  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading, token } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -52,9 +48,22 @@ const MainApp: React.FC = () => {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const { sendMessage, isLoading, error } = useChatAPI({
-    token: user?.user_id ? "placeholder-token" : undefined,
-    userId: user?.user_id,
+  // Use enhanced chat with automatic budget refresh
+  const { sendMessage, isLoading, error } = useEnhancedChatWithBudget({
+    onMessage: (message) => {
+      setMessages((prev) => [...prev, message]);
+    },
+    onError: (_errorMsg) => {
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        content:
+          "I apologize, but I encountered an error processing your request. Please try again.",
+        sender: "assistant",
+        timestamp: new Date(),
+        isError: true,
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    },
   });
 
   const scrollToBottom = () => {
@@ -77,53 +86,27 @@ const MainApp: React.FC = () => {
     };
 
     setMessages((prev) => [...prev, userMessage]);
+
+    // Create enhanced chat request
+    const request = {
+      user_id: user?.user_id || "anonymous",
+      question: inputValue,
+      complexity_level: chatSettings.complexity,
+      use_tools: chatSettings.useTools,
+      use_hybrid_search: chatSettings.useHybridSearch,
+      include_citations: chatSettings.includeCitations,
+      max_sources: chatSettings.maxSources,
+      filters: chatSettings.filters,
+      bypass_cache: false,
+    };
+
     setInputValue("");
 
     try {
-      const response = await sendMessage(inputValue, true); // Use enhanced chat
-      console.log("Response received:", response);
-
-      // Convert source documents to proper format
-      const sources: SourceDocumentType[] = (
-        response.source_documents || []
-      ).map((doc, index) => {
-        if (typeof doc === "string") {
-          return {
-            source: doc,
-            page: index + 1,
-            document_type: "legal_document" as const,
-            relevance_snippet: `Content from ${doc}`,
-            sections: [],
-            legal_topics: [],
-            confidence_score: 0.8,
-          };
-        }
-        return doc;
-      });
-
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: response.answer,
-        sender: "assistant",
-        timestamp: new Date(),
-        sources,
-        confidence: response.confidence,
-        tools_used: response.tools_used,
-        citations: response.citations,
-      };
-
-      setMessages((prev) => [...prev, assistantMessage]);
+      await sendMessage(request);
     } catch (err) {
       console.error("Error in handleSubmit:", err);
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content:
-          "I apologize, but I encountered an error processing your request. Please try again.",
-        sender: "assistant",
-        timestamp: new Date(),
-        isError: true,
-      };
-      setMessages((prev) => [...prev, errorMessage]);
+      // Error handling is done in onError callback
     }
   };
 
@@ -495,7 +478,8 @@ const MainApp: React.FC = () => {
 
           {activeView === "evaluation" && (
             <EvaluationInterface
-              token={user?.user_id ? "placeholder-token" : undefined}
+              token={token || undefined}
+              user={user || undefined}
             />
           )}
 
@@ -590,12 +574,14 @@ const MainApp: React.FC = () => {
   );
 };
 
-// Main App component with AuthProvider
+// Main App component with AuthProvider and ToastProvider
 function App() {
   return (
-    <AuthProvider>
-      <MainApp />
-    </AuthProvider>
+    <ToastProvider>
+      <AuthProvider>
+        <MainApp />
+      </AuthProvider>
+    </ToastProvider>
   );
 }
 

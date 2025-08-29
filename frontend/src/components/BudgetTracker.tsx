@@ -11,9 +11,25 @@ interface BudgetTrackerProps {
 }
 
 const BudgetTracker: React.FC<BudgetTrackerProps> = ({ user }) => {
-  const { budget_info } = user;
+  const { budget_info, budget_limits } = user;
 
-  if (!budget_info) {
+  // Handle both budget_limits (from login) and budget_info (from profile) structures
+  let dailyLimit, monthlyLimit, dailySpent, monthlySpent;
+
+  if (budget_limits) {
+    // Use budget_limits structure (from login/register response)
+    dailyLimit = budget_limits.daily || 0;
+    monthlyLimit = budget_limits.monthly || 0;
+    // For limits-only structure, assume no spending info available
+    dailySpent = 0;
+    monthlySpent = 0;
+  } else if (budget_info) {
+    // Use nested budget_info structure (from profile endpoint)
+    dailyLimit = budget_info.limits?.daily_limit || 0;
+    monthlyLimit = budget_info.limits?.monthly_limit || 0;
+    dailySpent = budget_info.usage?.daily_spent || 0;
+    monthlySpent = budget_info.usage?.monthly_spent || 0;
+  } else {
     return (
       <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
         <p className="text-yellow-700">Budget information not available</p>
@@ -21,13 +37,9 @@ const BudgetTracker: React.FC<BudgetTrackerProps> = ({ user }) => {
     );
   }
 
-  const dailyPercentage =
-    (budget_info.usage.daily_spent_usd / budget_info.limits.daily_limit_usd) *
-    100;
+  const dailyPercentage = dailyLimit > 0 ? (dailySpent / dailyLimit) * 100 : 0;
   const monthlyPercentage =
-    (budget_info.usage.monthly_spent_usd /
-      budget_info.limits.monthly_limit_usd) *
-    100;
+    monthlyLimit > 0 ? (monthlySpent / monthlyLimit) * 100 : 0;
 
   const getDailyColor = () => {
     if (dailyPercentage >= 90) return "text-red-600";
@@ -49,8 +61,7 @@ const BudgetTracker: React.FC<BudgetTrackerProps> = ({ user }) => {
         <div className="text-gray-600">
           <span className="font-medium">Daily:</span>
           <span className={`ml-1 ${getDailyColor()}`}>
-            ${budget_info.usage.daily_spent_usd.toFixed(2)}/$
-            {budget_info.limits.daily_limit_usd.toFixed(2)}
+            ${dailySpent.toFixed(2)}/${dailyLimit.toFixed(2)}
           </span>
         </div>
         {dailyPercentage >= 90 && (
@@ -64,8 +75,7 @@ const BudgetTracker: React.FC<BudgetTrackerProps> = ({ user }) => {
         <div className="text-gray-600">
           <span className="font-medium">Monthly:</span>
           <span className={`ml-1 ${getMonthlyColor()}`}>
-            ${budget_info.usage.monthly_spent_usd.toFixed(2)}/$
-            {budget_info.limits.monthly_limit_usd.toFixed(2)}
+            ${monthlySpent.toFixed(2)}/${monthlyLimit.toFixed(2)}
           </span>
         </div>
         {monthlyPercentage >= 90 && (

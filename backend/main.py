@@ -14,8 +14,8 @@ from routes.evaluation import router as evaluation_router
 from routes.auth import router as auth_router
 from config.settings import settings
 from middleware.rate_limit_middleware import RateLimitMiddleware
-from middleware.request_size_middleware import RequestSizeMiddleware
-from middleware.request_timeout_middleware import TimeoutProtectionMiddleware
+#from middleware.request_size_middleware import RequestSizeMiddleware
+#from middleware.request_timeout_middleware import TimeoutProtectionMiddleware
 from middleware.cost_monitoring_middleware import CostMonitoringMiddleware
 
 logging.basicConfig(
@@ -49,12 +49,12 @@ app.add_middleware(
     allow_headers=["*"],  # Allow all headers
 )
 
-app.add_middleware(
-    RequestSizeMiddleware,
-    max_content_kb=100,  # 100KB max content
-    max_headers_kb=10    # 10KB max headers
-)
-app.add_middleware(TimeoutProtectionMiddleware, timeout_seconds=30)
+# app.add_middleware(
+#     RequestSizeMiddleware,
+#     max_content_kb=100,  # 100KB max content
+#     max_headers_kb=10    # 10KB max headers
+# )
+# app.add_middleware(TimeoutProtectionMiddleware, timeout_seconds=30)
 app.add_middleware(
     RateLimitMiddleware,
     skip_paths=["/docs", "/redoc", "/openapi.json", "/health/live"]  # Skip docs and basic health

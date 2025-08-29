@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import type { 
   EnhancedChatRequest, 
   EnhancedChatResponse, 
   Message
 } from '../types';
+
+const API_BASE_URL = 'http://localhost:8000/api';
 
 interface UseEnhancedChatProps {
   onMessage: (message: Message) => void;
@@ -29,7 +30,7 @@ const enhancedChatAPI = async (request: EnhancedChatRequest): Promise<EnhancedCh
     throw new Error('Authentication required');
   }
 
-  const response = await fetch('/api/enhanced-chat', {
+  const response = await fetch(`${API_BASE_URL}/enhanced-chat`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -48,11 +49,14 @@ const enhancedChatAPI = async (request: EnhancedChatRequest): Promise<EnhancedCh
 
 export const useEnhancedChat = ({ onMessage, onError }: UseEnhancedChatProps): UseEnhancedChatReturn => {
   const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const mutation = useMutation({
-    mutationFn: enhancedChatAPI,
-    onSuccess: (data: EnhancedChatResponse) => {
-      setError(null);
+  const sendMessage = async (request: EnhancedChatRequest): Promise<void> => {
+    setError(null);
+    setIsLoading(true);
+    
+    try {
+      const data = await enhancedChatAPI(request);
       
       // Convert API response to Message format
       const assistantMessage: Message = {
@@ -78,29 +82,19 @@ export const useEnhancedChat = ({ onMessage, onError }: UseEnhancedChatProps): U
           toast.success(`Query completed (Cost: $${totalCost.toFixed(4)})`);
         }
       }
-    },
-    onError: (error: Error) => {
-      const errorMessage = error.message || 'An unexpected error occurred';
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
       setError(errorMessage);
       onError(errorMessage);
       toast.error(errorMessage);
-    },
-  });
-
-  const sendMessage = async (request: EnhancedChatRequest): Promise<void> => {
-    setError(null);
-    
-    try {
-      await mutation.mutateAsync(request);
-    } catch (error) {
-      // Error handling is done in onError callback
-      console.error('Enhanced chat error:', error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return {
     sendMessage,
-    isLoading: mutation.isPending,
+    isLoading,
     error,
   };
 };

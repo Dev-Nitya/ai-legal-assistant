@@ -9,10 +9,10 @@ import uuid
 
 # Import your existing components
 from services.auth_service import auth_service
-from models.user import User, UserTier, UserSession, UserBudget
+from models.user import User, UserSession, UserBudget
 from config.database import get_db
 from config.settings import Settings
-from config.cost_limits import get_budget_for_tier
+from config.cost_limits import UserTier, get_budget_for_tier
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,7 @@ async def register_user(
     request: UserRegistrationRequest,
     db: Session = Depends(get_db)
 ):
+    print(f"Request body: {request}")
     logger.info(f"🔐 Registration attempt for email: {request.email}")
 
     try:
@@ -63,8 +64,10 @@ async def register_user(
         
         password_hash = auth_service.hash_password(request.password)
 
+        new_user_id = str(uuid.uuid4())
+
         new_user = User(
-            user_id=str(uuid.uuid4()),
+            user_id=new_user_id,
             email=request.email,
             password_hash=password_hash,
             full_name=request.full_name,
@@ -72,31 +75,26 @@ async def register_user(
             is_active=True
         )
         db.add(new_user)
-        db.commit()
-        db.refresh(new_user) # Get the saved user with generated fields
 
-        logger.info(f"✅ User created successfully: {new_user.email} (ID: {new_user.user_id})")
-
-        tier_limits = get_budget_for_tier(new_user.tier)
+        tier_limits = get_budget_for_tier(request.tier)
 
         user_budget = UserBudget(
-            user_id=new_user.user_id,
-            daily_limit_usd=tier_limits["daily_limit_usd"],
-            monthly_limit_usd=tier_limits["monthly_limit_usd"],
-            hourly_limit=tier_limits["hourly_limit_usd"],
+            user_id=new_user_id,
+            daily_limit_usd=tier_limits.daily_usd,
+            monthly_limit_usd=tier_limits.monthly_usd,
+            hourly_limit=tier_limits.hourly_usd,
             daily_spent_usd=0.0,
             monthly_spent_usd=0.0,
             requests_this_hour=0
         )
         
         db.add(user_budget)
-        db.commit()
 
         access_token, expire = auth_service.create_access_token(new_user)
         
         session = UserSession(
             session_id=str(uuid.uuid4()),
-            user_id=new_user.user_id,
+            user_id=new_user_id,
             token_hash=access_token,
             expires_at=expire,
             is_active=True
@@ -104,9 +102,12 @@ async def register_user(
         
         db.add(session)
         db.commit()
+        db.refresh(new_user)
+
+        logger.info(f"✅ User created successfully: {new_user.email} (ID: {new_user.user_id})")
 
         logger.info(f"💰 Budget limits set for {new_user.email}: "
-                   f"${tier_limits['daily_limit']}/day, ${tier_limits['monthly_limit']}/month")
+                   f"${tier_limits.daily_usd}/day, ${tier_limits.monthly_usd}/month")
         
         return AuthResponse(
             access_token=access_token,
@@ -116,7 +117,7 @@ async def register_user(
                 "full_name": new_user.full_name,
                 "tier": new_user.tier.value,
                 "is_active": new_user.is_active,
-                "budget_limits": tier_limits  # Include budget info
+                "budget_limits": tier_limits.to_dict()  # Convert to dict for JSON response
             }
         )
     
@@ -180,7 +181,7 @@ async def login_user(
         )
 
         # Step 6: Get current budget info
-        budget_limits = get_budget_for_tier(user.tier)
+        budget_limits = db.query(UserBudget).filter(UserBudget.user_id == user.user_id).first()
         
         logger.info(f"✅ Login successful: {user.email} (tier: {user.tier.value})")
 
@@ -194,7 +195,18 @@ async def login_user(
                 "tier": user.tier.value,
                 "is_active": user.is_active,
                 "last_login": user.last_login.isoformat() if user.last_login else None,
-                "budget_limits": budget_limits
+                "budget_info": {
+                    "limits": {
+                        "daily_limit": budget_limits.daily_limit_usd,
+                        "monthly_limit": budget_limits.monthly_limit_usd,
+                        "hourly_limit": budget_limits.hourly_limit
+                    },
+                    "usage": {
+                        "daily_spent": budget_limits.daily_spent_usd,
+                        "monthly_spent": budget_limits.monthly_spent_usd,
+                        "hourly_spent": budget_limits.requests_this_hour
+                    }
+                }
             }
         )
     
@@ -237,13 +249,13 @@ async def get_user_profile(
         
         budget_info = {
             "limits": {
-                "daily_limit_usd": budget_limits.daily_limit_usd,
-                "monthly_limit_usd": budget_limits.monthly_limit_usd,
+                "daily_limit": budget_limits.daily_limit_usd,
+                "monthly_limit": budget_limits.monthly_limit_usd,
                 "hourly_limit": budget_limits.hourly_limit
             },
             "usage": {
-                "daily_spent_usd": budget_limits.daily_spent_usd,
-                "monthly_spent_usd": budget_limits.monthly_spent_usd,
+                "daily_spent": budget_limits.daily_spent_usd,
+                "monthly_spent": budget_limits.monthly_spent_usd,
                 "hourly_spent": budget_limits.requests_this_hour
             }
         }

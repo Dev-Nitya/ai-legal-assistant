@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   FiPlay as Play,
@@ -17,13 +17,18 @@ import type {
   BatchEvaluationRequest,
   EvaluationResponse,
   BatchEvaluationResponse,
+  User,
 } from "../types";
 
 interface EvaluationInterfaceProps {
   token?: string;
+  user?: User;
 }
 
-const EvaluationInterface: React.FC<EvaluationInterfaceProps> = ({ token }) => {
+const EvaluationInterface: React.FC<EvaluationInterfaceProps> = ({
+  token,
+  user,
+}) => {
   const [activeTab, setActiveTab] = useState<"single" | "batch">("single");
   const [isLoading, setIsLoading] = useState(false);
   const [results, setResults] = useState<
@@ -41,10 +46,18 @@ const EvaluationInterface: React.FC<EvaluationInterfaceProps> = ({ token }) => {
     category: "",
     difficulty: "",
     max_questions: 5,
-    user_id: "evaluator",
+    user_id: user?.user_id || "anonymous",
   });
 
   const API_BASE_URL = "http://localhost:8000/api";
+
+  // Update batch config user_id when user changes
+  useEffect(() => {
+    setBatchConfig((prev) => ({
+      ...prev,
+      user_id: user?.user_id || "anonymous",
+    }));
+  }, [user?.user_id]);
 
   const runSingleEvaluation = async () => {
     if (!singleQuestion.trim()) return;
@@ -56,7 +69,7 @@ const EvaluationInterface: React.FC<EvaluationInterfaceProps> = ({ token }) => {
     try {
       const request: EvaluationRequest = {
         question: singleQuestion,
-        user_id: "evaluator",
+        user_id: user?.user_id || "anonymous",
         use_ground_truth: useGroundTruth,
         ground_truth_answer: useGroundTruth ? groundTruthAnswer : undefined,
       };
@@ -284,10 +297,10 @@ const EvaluationInterface: React.FC<EvaluationInterfaceProps> = ({ token }) => {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
               >
                 <option value="">All Categories</option>
-                <option value="criminal">Criminal Law</option>
-                <option value="civil">Civil Law</option>
-                <option value="constitutional">Constitutional Law</option>
-                <option value="corporate">Corporate Law</option>
+                <option value="criminal_law">Criminal Law</option>
+                <option value="civil_law">Civil Law</option>
+                <option value="constitutional_law">Constitutional Law</option>
+                <option value="corporate_law">Corporate Law</option>
               </select>
             </div>
 
