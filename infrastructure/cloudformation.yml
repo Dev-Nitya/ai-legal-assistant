@@ -12,6 +12,13 @@ Parameters:
     Default: production
     AllowedValues: [development, staging, production]
 
+  DBPassword:
+    Type: String
+    Description: PostgreSQL master password
+    NoEcho: true
+    MinLength: 8
+    MaxLength: 128
+
 Resources:
   # S3 Bucket for Documents (persistent across deployments)
   DocumentsBucket:
@@ -44,6 +51,270 @@ Resources:
         EventBridgeConfiguration:
           EventBridgeEnabled: true  # Enable for document upload notifications
   
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: '10.0.0.0/16'
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub 'ai-legal-assistant-vpc-${Environment}'
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '10.0.1.0/24'
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub 'ai-legal-assistant-public-1-${Environment}'
+        - Key: Type
+          Value: Public
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '10.0.2.0/24'
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub 'ai-legal-assistant-public-2-${Environment}'
+        - Key: Type
+          Value: 'Public'
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '10.0.3.0/24'
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false  # No public IPs (private)
+      Tags:
+        - Key: Name
+          Value: !Sub 'ai-legal-assistant-private-1-${Environment}'
+        - Key: Type
+          Value: 'Private'
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '10.0.4.0/24'
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: false  # No public IPs (private)
+      Tags:
+        - Key: Name
+          Value: !Sub 'ai-legal-assistant-private-2-${Environment}'
+        - Key: Type
+          Value: 'Private'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub 'ai-legal-assistant-igw-${Environment}'
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NATGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet1  # NAT goes in public subnet
+      Tags:
+        - Key: Name
+          Value: !Sub 'ai-legal-assistant-nat-${Environment}'
+
+  NATGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub 'ai-legal-assistant-nat-eip-${Environment}'
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub 'ai-legal-assistant-public-rt-${Environment}'
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref InternetGateway
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub 'ai-legal-assistant-private-rt-${Environment}'
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NATGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Security group for RDS PostgreSQL database'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref ApplicationSecurityGroup
+          Description: 'Allow PostgreSQL access from application only'
+      Tags:
+        - Key: Name
+          Value: !Sub 'ai-legal-assistant-db-sg-${Environment}'
+
+  ApplicationSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Security group for application server'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80    # HTTP
+          ToPort: 80
+          CidrIp: '0.0.0.0/0'  # Allow from anywhere
+        - IpProtocol: tcp
+          FromPort: 443   # HTTPS
+          ToPort: 443
+          CidrIp: '0.0.0.0/0'
+        - IpProtocol: tcp
+          FromPort: 8000  # FastAPI port
+          ToPort: 8000
+          CidrIp: '0.0.0.0/0'
+      Tags:
+        - Key: Name
+          Value: !Sub 'ai-legal-assistant-app-sg-${Environment}'
+
+  CacheSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Security group for ElastiCache Redis'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref ApplicationSecurityGroup
+          Description: 'Allow Redis access from application only'
+      Tags:
+        - Key: Name
+          Value: !Sub 'ai-legal-assistant-cache-sg-${Environment}'
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: 'Subnet group for RDS database - PRIVATE subnets only'
+      SubnetIds:
+        - !Ref PrivateSubnet1  # Database in private subnet 1
+        - !Ref PrivateSubnet2  # Database in private subnet 2
+      Tags:
+        - Key: Name
+          Value: !Sub 'ai-legal-assistant-db-subnet-group-${Environment}'
+
+  PostgreSQLDatabase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub 'ai-legal-assistant-postgres-${Environment}'
+      DBInstanceClass: 'db.t4g.micro'      # Smallest ARM instance (cheapest)
+      Engine: 'postgres'
+      EngineVersion: '15.4'                # Recent stable version
+      AllocatedStorage: 20                 # 20GB storage (minimum)
+      StorageType: 'gp2'                   # General Purpose SSD
+      
+      # Database credentials
+      DBName: 'ai_legal_assistant'         # Database name
+      MasterUsername: 'postgres'           # Admin username
+      MasterUserPassword: !Ref DBPassword
+      
+      # Network configuration
+      VPCSecurityGroups:
+        - !Ref DatabaseSecurityGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      
+      # Cost optimization settings
+      MultiAZ: false                       # No redundancy (saves money)
+      BackupRetentionPeriod: 7             # Keep backups for 7 days
+      DeleteAutomatedBackups: true         # Clean up old backups
+      DeletionProtection: false            # Allow deletion (for development)
+      
+      Tags:
+        - Key: Name
+          Value: !Sub 'ai-legal-assistant-postgres-${Environment}'
+
+  # CACHE SETUP
+  CacheSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: 'Subnet group for ElastiCache - PRIVATE subnets only'
+      SubnetIds:
+        - !Ref PrivateSubnet1  # Cache in private subnet 1
+        - !Ref PrivateSubnet2  # Cache in private subnet 2
+
+  RedisCluster:
+    Type: AWS::ElastiCache::CacheCluster
+    Properties:
+      CacheClusterName: !Sub 'ai-legal-assistant-redis-${Environment}'
+      Engine: 'redis'
+      CacheNodeType: 'cache.t4g.micro'
+      NumCacheNodes: 1
+      VpcSecurityGroupIds:
+        - !Ref CacheSecurityGroup
+      CacheSubnetGroupName: !Ref CacheSubnetGroup
+      Tags:
+        - Key: Name
+          Value: !Sub 'ai-legal-assistant-redis-${Environment}'
+
   # IAM Role for Application
   ApplicationRole:
     Type: AWS::IAM::Role
@@ -123,3 +394,40 @@ Outputs:
     Value: !GetAtt ECSCluster.Arn
     Export:
       Name: !Sub "${AWS::StackName}-ECSClusterArn"
+
+  DatabaseEndpoint:
+    Description: 'RDS PostgreSQL endpoint (in private subnet)'
+    Value: !GetAtt PostgreSQLDatabase.Endpoint.Address
+    Export:
+      Name: !Sub "${AWS::StackName}-DatabaseEndpoint"
+  
+  DatabasePort:
+    Description: 'Database port'
+    Value: !GetAtt PostgreSQLDatabase.Endpoint.Port
+    Export:
+      Name: !Sub "${AWS::StackName}-DatabasePort"
+
+  RedisEndpoint:
+    Description: 'ElastiCache Redis endpoint (in private subnet)'
+    Value: !GetAtt RedisCluster.RedisEndpoint.Address
+    Export:
+      Name: !Sub "${AWS::StackName}-RedisEndpoint"
+
+  # Network outputs
+  VPCId:
+    Description: 'VPC ID'
+    Value: !Ref VPC
+    Export:
+      Name: !Sub "${AWS::StackName}-VPCId"
+
+  PrivateSubnet1Id:
+    Description: 'Private Subnet 1 ID (for database)'
+    Value: !Ref PrivateSubnet1
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnet1"
+
+  PrivateSubnet2Id:
+    Description: 'Private Subnet 2 ID (for database)'
+    Value: !Ref PrivateSubnet2
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnet2"

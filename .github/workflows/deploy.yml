@@ -1,235 +1,263 @@
-# name: Deploy AI Legal Assistant to AWS
+name: Deploy AI Legal Assistant to AWS
 
-# on:
-#   push:
-#     branches: [master]
-#     paths:
-#       - "infrastructure/**" # Only trigger on infrastructure changes
-#       - "backend/**" # Or backend code changes
-#       - ".github/workflows/**" # Or workflow changes
-#   pull_request:
-#     branches: [master]
-#   workflow_dispatch: # Manual trigger
-#     inputs:
-#       force_infrastructure_update:
-#         description: "Force infrastructure update"
-#         required: false
-#         default: false
-#         type: boolean
+on:
+  push:
+    branches: [master]
+    paths:
+      - "infrastructure/**" # Only trigger on infrastructure changes
+      - "backend/**" # Or backend code changes
+      - ".github/workflows/**" # Or workflow changes
+  pull_request:
+    branches: [master]
+  workflow_dispatch: # Manual trigger
+    inputs:
+      force_infrastructure_update:
+        description: "Force infrastructure update"
+        required: false
+        default: false
+        type: boolean
 
-# env:
-#   AWS_REGION: us-east-1
-#   STACK_NAME: ai-legal-assistant-infra
-#   APPLICATION_NAME: ai-legal-assistant
+env:
+  AWS_REGION: us-east-1
+  STACK_NAME: ai-legal-assistant-infra
+  APPLICATION_NAME: ai-legal-assistant
 
-# jobs:
-#   detect-changes:
-#     name: Detect Changes
-#     runs-on: ubuntu-latest
-#     outputs:
-#       infrastructure-changed: ${{ steps.changes.outputs.infrastructure }}
-#       backend-changed: ${{ steps.changes.outputs.backend }}
-#       force-infrastructure: ${{ github.event.inputs.force_infrastructure_update == 'true' }}
-#     steps:
-#       - name: Checkout code
-#         uses: actions/checkout@v4
-#         with:
-#           fetch-depth: 2 # Get last 2 commits to compare
+jobs:
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      infrastructure-changed: ${{ steps.changes.outputs.infrastructure }}
+      backend-changed: ${{ steps.changes.outputs.backend }}
+      force-infrastructure: ${{ github.event.inputs.force_infrastructure_update == 'true' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2 # Get last 2 commits to compare
 
-#       - name: Detect changed files
-#         id: changes
-#         run: |
-#           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-#             echo "infrastructure=true" >> $GITHUB_OUTPUT
-#             echo "backend=true" >> $GITHUB_OUTPUT
-#           else
-#             # Check for infrastructure changes
-#             if git diff --name-only HEAD^ HEAD | grep -E '^infrastructure/|^\.github/workflows/' > /dev/null; then
-#               echo "infrastructure=true" >> $GITHUB_OUTPUT
-#             else
-#               echo "infrastructure=false" >> $GITHUB_OUTPUT
-#             fi
+      - name: Detect changed files
+        id: changes
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "infrastructure=true" >> $GITHUB_OUTPUT
+            echo "backend=true" >> $GITHUB_OUTPUT
+          else
+            # Check for infrastructure changes
+            if git diff --name-only HEAD^ HEAD | grep -E '^infrastructure/|^\.github/workflows/' > /dev/null; then
+              echo "infrastructure=true" >> $GITHUB_OUTPUT
+            else
+              echo "infrastructure=false" >> $GITHUB_OUTPUT
+            fi
 
-#             # Check for backend changes
-#             if git diff --name-only HEAD^ HEAD | grep -E '^backend/' > /dev/null; then
-#               echo "backend=true" >> $GITHUB_OUTPUT
-#             else
-#               echo "backend=false" >> $GITHUB_OUTPUT
-#             fi
-#           fi
+            # Check for backend changes
+            if git diff --name-only HEAD^ HEAD | grep -E '^backend/' > /dev/null; then
+              echo "backend=true" >> $GITHUB_OUTPUT
+            else
+              echo "backend=false" >> $GITHUB_OUTPUT
+            fi
+          fi
 
-#   test:
-#     name: Run Tests
-#     runs-on: ubuntu-latest
-#     needs: detect-changes
-#     if: needs.detect-changes.outputs.backend-changed == 'true'
-#     steps:
-#       - name: Checkout code
-#         uses: actions/checkout@v4
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.backend-changed == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-#       - name: Set up Python
-#         uses: actions/setup-python@v4
-#         with:
-#           python-version: "3.11"
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
 
-#       - name: Install dependencies
-#         run: |
-#           cd backend
-#           pip install -r requirements.txt
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
 
-#       - name: Basic syntax check
-#         run: |
-#           cd backend
-#           python -m py_compile main.py
+      - name: Basic syntax check
+        run: |
+          cd backend
+          python -m py_compile main.py
 
-#       - name: Lint code
-#         run: |
-#           cd backend
-#           pip install flake8
-#           flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics || true
+      - name: Lint code
+        run: |
+          cd backend
+          pip install flake8
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics || true
 
-#   deploy-infrastructure:
-#     name: Deploy Infrastructure
-#     runs-on: ubuntu-latest
-#     needs: [detect-changes, test]
-#     if: |
-#       always() &&
-#       (needs.detect-changes.outputs.infrastructure-changed == 'true' ||
-#        needs.detect-changes.outputs.force-infrastructure == 'true') &&
-#       (needs.test.result == 'success' || needs.test.result == 'skipped')
-#     outputs:
-#       bucket-name: ${{ steps.deploy-stack.outputs.bucket-name }}
-#       stack-updated: ${{ steps.deploy-stack.outputs.stack-updated }}
+  deploy-infrastructure:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    needs: [detect-changes, test]
+    if: |
+      always() &&
+      (needs.detect-changes.outputs.infrastructure-changed == 'true' ||
+       needs.detect-changes.outputs.force-infrastructure == 'true') &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped')
+    outputs:
+      bucket-name: ${{ steps.deploy-stack.outputs.bucket-name }}
+      database-endpoint: ${{ steps.deploy-stack.outputs.database-endpoint}}
+      redis-endpoint: ${{ steps.deploy-stack.outputs.redis-endpoint }}
+      stack-updated: ${{ steps.deploy-stack.outputs.stack-updated }}
 
-#     steps:
-#       - name: Checkout code
-#         uses: actions/checkout@v4
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-#       - name: Configure AWS credentials
-#         uses: aws-actions/configure-aws-credentials@v4
-#         with:
-#           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-#           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-#           aws-region: ${{ env.AWS_REGION }}
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-#       - name: Check if stack exists
-#         id: check-stack
-#         run: |
-#           if aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} > /dev/null 2>&1; then
-#             echo "stack-exists=true" >> $GITHUB_OUTPUT
-#             echo "Stack exists, will update if needed"
-#           else
-#             echo "stack-exists=false" >> $GITHUB_OUTPUT
-#             echo "Stack does not exist, will create"
-#           fi
+      - name: Check if stack exists
+        id: check-stack
+        run: |
+          if aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} > /dev/null 2>&1; then
+            echo "stack-exists=true" >> $GITHUB_OUTPUT
+            echo "Stack exists, will update if needed"
+          else
+            echo "stack-exists=false" >> $GITHUB_OUTPUT
+            echo "Stack does not exist, will create"
+          fi
 
-#       - name: Deploy CloudFormation stack
-#         id: deploy-stack
-#         run: |
-#           echo "Deploying CloudFormation stack..."
+      - name: Deploy CloudFormation stack
+        id: deploy-stack
+        run: |
+          echo "Deploying CloudFormation stack..."
 
-#           # Deploy with change detection
-#           DEPLOY_OUTPUT=$(aws cloudformation deploy \
-#             --template-file infrastructure/cloudformation.yml \
-#             --stack-name ${{ env.STACK_NAME }} \
-#             --parameter-overrides Environment=production \
-#             --capabilities CAPABILITY_NAMED_IAM \
-#             --region ${{ env.AWS_REGION }} \
-#             --no-fail-on-empty-changeset 2>&1 || echo "DEPLOY_FAILED")
+          # Deploy with change detection
+          DEPLOY_OUTPUT=$(aws cloudformation deploy \
+            --template-file infrastructure/cloudformation.yml \
+            --stack-name ${{ env.STACK_NAME }} \
+            --parameter-overrides Environment=production \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region ${{ env.AWS_REGION }} \
+            --no-fail-on-empty-changeset 2>&1 || echo "DEPLOY_FAILED")
 
-#           if echo "$DEPLOY_OUTPUT" | grep -q "No changes to deploy"; then
-#             echo "stack-updated=false" >> $GITHUB_OUTPUT
-#             echo "No infrastructure changes detected"
-#           elif echo "$DEPLOY_OUTPUT" | grep -q "DEPLOY_FAILED"; then
-#             echo "Deployment failed:"
-#             echo "$DEPLOY_OUTPUT"
-#             exit 1
-#           else
-#             echo "stack-updated=true" >> $GITHUB_OUTPUT
-#             echo "Infrastructure updated successfully"
-#           fi
+          if echo "$DEPLOY_OUTPUT" | grep -q "No changes to deploy"; then
+            echo "stack-updated=false" >> $GITHUB_OUTPUT
+            echo "No infrastructure changes detected"
+          elif echo "$DEPLOY_OUTPUT" | grep -q "DEPLOY_FAILED"; then
+            echo "Deployment failed:"
+            echo "$DEPLOY_OUTPUT"
+            exit 1
+          else
+            echo "stack-updated=true" >> $GITHUB_OUTPUT
+            echo "Infrastructure updated successfully"
+          fi
 
-#           # Get bucket name (always try to get it)
-#           BUCKET_NAME=$(aws cloudformation describe-stacks \
-#             --stack-name ${{ env.STACK_NAME }} \
-#             --query 'Stacks[0].Outputs[?OutputKey==`BucketName`].OutputValue' \
-#             --output text \
-#             --region ${{ env.AWS_REGION }})
+          # Get bucket name (always try to get it)
+          BUCKET_NAME=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`BucketName`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
 
-#           echo "bucket-name=$BUCKET_NAME" >> $GITHUB_OUTPUT
-#           echo "S3 Bucket: $BUCKET_NAME"
+          echo "bucket-name=$BUCKET_NAME" >> $GITHUB_OUTPUT
+          echo "S3 Bucket: $BUCKET_NAME"
 
-#   build-and-deploy:
-#     name: Build Application
-#     runs-on: ubuntu-latest
-#     needs: [detect-changes, test, deploy-infrastructure]
-#     if: |
-#       always() &&
-#       needs.detect-changes.outputs.backend-changed == 'true' &&
-#       (needs.test.result == 'success' || needs.test.result == 'skipped') &&
-#       (needs.deploy-infrastructure.result == 'success' || needs.deploy-infrastructure.result == 'skipped')
+          # Get database endpoint
+          DB_ENDPOINT=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME}}) \
+            --query 'Stacks[0].Outputs[?OutputKey==`DatabaseEndpoint`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }}
+          echo "database-endpoint=$DB_ENDPOINT" >> $GITHUB_OUTPUT
+          echo "Database Endpoint: $DB_ENDPOINT"
 
-#     steps:
-#       - name: Checkout code
-#         uses: actions/checkout@v4
+          # Get Redis endpoint
+          REDIS_ENDPOINT=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`RedisEndpoint`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          echo "redis-endpoint=$REDIS_ENDPOINT" >> $GITHUB_OUTPUT
+          echo "Redis Endpoint: $REDIS_ENDPOINT"
+  build-and-deploy:
+    name: Build Application
+    runs-on: ubuntu-latest
+    needs: [detect-changes, test, deploy-infrastructure]
+    if: |
+      always() &&
+      needs.detect-changes.outputs.backend-changed == 'true' &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
+      (needs.deploy-infrastructure.result == 'success' || needs.deploy-infrastructure.result == 'skipped')
 
-#       - name: Set up Docker Buildx
-#         uses: docker/setup-buildx-action@v3
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-#       - name: Build Docker image
-#         run: |
-#           echo "Building Docker image..."
-#           docker build -t ${{ env.APPLICATION_NAME }}:${{ github.sha }} ./backend
-#           docker tag ${{ env.APPLICATION_NAME }}:${{ github.sha }} ${{ env.APPLICATION_NAME }}:latest
-#           echo "Docker image built successfully"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-#       - name: Test Docker image
-#         run: |
-#           echo "Testing Docker image..."
-#           docker run --rm ${{ env.APPLICATION_NAME }}:latest python -c "import main; print('Docker image works!')"
+      - name: Build Docker image
+        run: |
+          echo "Building Docker image..."
+          docker build -t ${{ env.APPLICATION_NAME }}:${{ github.sha }} ./backend
+          docker tag ${{ env.APPLICATION_NAME }}:${{ github.sha }} ${{ env.APPLICATION_NAME }}:latest
+          echo "Docker image built successfully"
 
-#   create-deployment-summary:
-#     name: Create Deployment Summary
-#     runs-on: ubuntu-latest
-#     needs: [detect-changes, deploy-infrastructure, build-and-deploy]
-#     if: always()
+      - name: Test Docker image
+        run: |
+          echo "Testing Docker image..."
+          docker run --rm ${{ env.APPLICATION_NAME }}:latest python -c "import main; print('Docker image works!')"
 
-#     steps:
-#       - name: Create deployment summary
-#         run: |
-#           echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
-#           echo "" >> $GITHUB_STEP_SUMMARY
-#           echo "### Changes Detected:" >> $GITHUB_STEP_SUMMARY
-#           echo "- **Infrastructure**: ${{ needs.detect-changes.outputs.infrastructure-changed }}" >> $GITHUB_STEP_SUMMARY
-#           echo "- **Backend Code**: ${{ needs.detect-changes.outputs.backend-changed }}" >> $GITHUB_STEP_SUMMARY
-#           echo "- **Force Update**: ${{ needs.detect-changes.outputs.force-infrastructure }}" >> $GITHUB_STEP_SUMMARY
-#           echo "" >> $GITHUB_STEP_SUMMARY
-#           echo "### Deployment Status:" >> $GITHUB_STEP_SUMMARY
-#           echo "- **Infrastructure**: ${{ needs.deploy-infrastructure.result }}" >> $GITHUB_STEP_SUMMARY
-#           echo "- **Application Build**: ${{ needs.build-and-deploy.result }}" >> $GITHUB_STEP_SUMMARY
+  create-deployment-summary:
+    name: Create Deployment Summary
+    runs-on: ubuntu-latest
+    needs: [detect-changes, deploy-infrastructure, build-and-deploy]
+    if: always()
 
-#           if [ "${{ needs.deploy-infrastructure.outputs.bucket-name }}" != "" ]; then
-#             echo "" >> $GITHUB_STEP_SUMMARY
-#             echo "### Resources:" >> $GITHUB_STEP_SUMMARY
-#             echo "- **S3 Bucket**: ${{ needs.deploy-infrastructure.outputs.bucket-name }}" >> $GITHUB_STEP_SUMMARY
-#             echo "- **AWS Region**: ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
-#             echo "" >> $GITHUB_STEP_SUMMARY
-#             echo "### 📋 Next Steps:" >> $GITHUB_STEP_SUMMARY
-#             echo "1. Upload documents: \`aws s3 cp docs/ s3://${{ needs.deploy-infrastructure.outputs.bucket-name }}/legal-documents/ --recursive\`" >> $GITHUB_STEP_SUMMARY
-#             echo "2. Run locally: \`export AWS_S3_BUCKET=${{ needs.deploy-infrastructure.outputs.bucket-name }} && docker-compose up\`" >> $GITHUB_STEP_SUMMARY
-#           fi
+    steps:
+      - name: Create deployment summary
+        run: |
+          echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Changes Detected:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Infrastructure**: ${{ needs.detect-changes.outputs.infrastructure-changed }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Backend Code**: ${{ needs.detect-changes.outputs.backend-changed }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Force Update**: ${{ needs.detect-changes.outputs.force-infrastructure }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Deployment Status:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Infrastructure**: ${{ needs.deploy-infrastructure.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Application Build**: ${{ needs.build-and-deploy.result }}" >> $GITHUB_STEP_SUMMARY
 
-#       - name: Deployment Success
-#         if: |
-#           needs.deploy-infrastructure.result == 'success' ||
-#           (needs.deploy-infrastructure.result == 'skipped' && needs.build-and-deploy.result == 'success')
-#         run: |
-#           echo "✅ Deployment completed successfully!"
+          if [ "${{ needs.deploy-infrastructure.outputs.bucket-name }}" != "" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Resources:" >> $GITHUB_STEP_SUMMARY
+            echo "- **S3 Bucket**: ${{ needs.deploy-infrastructure.outputs.bucket-name }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Database**: ${{ needs.deploy-infrastructure.outputs.database-endpoint }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Redis Cache**: ${{ needs.deploy-infrastructure.outputs.redis-endpoint }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **AWS Region**: ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 📋 Next Steps:" >> $GITHUB_STEP_SUMMARY
+            echo "1. **Set environment variables for local testing**:" >> $GITHUB_STEP_SUMMARY
+            echo "   \`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "   export AWS_RDS_ENDPOINT=${{ needs.deploy-infrastructure.outputs.database-endpoint }}" >> $GITHUB_STEP_SUMMARY
+            echo "   export AWS_RDS_PASSWORD=your-db-password" >> $GITHUB_STEP_SUMMARY
+            echo "   export AWS_ELASTICACHE_ENDPOINT=${{ needs.deploy-infrastructure.outputs.redis-endpoint }}" >> $GITHUB_STEP_SUMMARY
+            echo "   export ENVIRONMENT=production" >> $GITHUB_STEP_SUMMARY
+            echo "   \`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "2. **Upload documents**: \`aws s3 cp backend/documents/ s3://${{ needs.deploy-infrastructure.outputs.bucket-name }}/legal-documents/ --recursive\`" >> $GITHUB_STEP_SUMMARY
+            echo "3. **Test locally**: \`docker-compose up\`" >> $GITHUB_STEP_SUMMARY
+          fi
 
-#       - name: Deployment Failure
-#         if: |
-#           needs.deploy-infrastructure.result == 'failure' ||
-#           needs.build-and-deploy.result == 'failure'
-#         run: |
-#           echo "❌ Deployment failed!"
-#           exit 1
+      - name: Deployment Success
+        if: |
+          needs.deploy-infrastructure.result == 'success' ||
+          (needs.deploy-infrastructure.result == 'skipped' && needs.build-and-deploy.result == 'success')
+        run: |
+          echo "✅ Deployment completed successfully!"
+
+      - name: Deployment Failure
+        if: |
+          needs.deploy-infrastructure.result == 'failure' ||
+          needs.build-and-deploy.result == 'failure'
+        run: |
+          echo "❌ Deployment failed!"
+          exit 1
