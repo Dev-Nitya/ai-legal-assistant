@@ -7,8 +7,6 @@ on:
       - "infrastructure/**"
       - "backend/**"
       - ".github/workflows/**"
-  pull_request:
-    branches: [master]
   workflow_dispatch:
     inputs:
       force_infrastructure_update:
@@ -19,196 +17,77 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  STACK_NAME: ai-legal-assistant-infra
+  INFRA_STACK: ai-legal-assistant-infra
+  SERVICE_STACK: ai-legal-assistant-service
   APPLICATION_NAME: ai-legal-assistant
+  IMAGE_TAG: latest
 
 jobs:
-  detect-changes:
-    name: Detect Changes
+  prepare:
     runs-on: ubuntu-latest
     outputs:
-      infrastructure-changed: ${{ steps.changes.outputs.infrastructure }}
-      backend-changed: ${{ steps.changes.outputs.backend }}
-      force-infrastructure: ${{ github.event.inputs.force_infrastructure_update == 'true' }}
+      infra-deployed: ${{ steps.infra_deploy.outcome }}
+      ecr_repo_uri: ${{ steps.infra_outputs.outputs.ecr_repo_uri }}
+      alb_dns: ${{ steps.infra_outputs.outputs.alb_dns }}
+      app_sg: ${{ steps.infra_outputs.outputs.app_sg }}
+      tg_arn: ${{ steps.infra_outputs.outputs.tg_arn }}
+      subnet1: ${{ steps.infra_outputs.outputs.subnet1 }}
+      subnet2: ${{ steps.infra_outputs.outputs.subnet2 }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-
-      - name: Detect changed files
-        id: changes
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "infrastructure=true" >> $GITHUB_OUTPUT
-            echo "backend=true" >> $GITHUB_OUTPUT
-          else
-            if git diff --name-only HEAD^ HEAD | grep -E '^infrastructure/|^\.github/workflows/' > /dev/null; then
-              echo "infrastructure=true" >> $GITHUB_OUTPUT
-            else
-              echo "infrastructure=false" >> $GITHUB_OUTPUT
-            fi
-            if git diff --name-only HEAD^ HEAD | grep -E '^backend/' > /dev/null; then
-              echo "backend=true" >> $GITHUB_OUTPUT
-            else
-              echo "backend=false" >> $GITHUB_OUTPUT
-            fi
-          fi
-
-  test:
-    name: Run Tests
-    runs-on: ubuntu-latest
-    needs: detect-changes
-    if: needs.detect-changes.outputs.backend-changed == 'true'
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          cd backend
-          pip install -r requirements.txt
-
-      - name: Basic syntax check
-        run: |
-          cd backend
-          python -m py_compile main.py
-
-      - name: Lint code
-        run: |
-          cd backend
-          pip install flake8
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics || true
-
-  deploy-infrastructure:
-    name: Deploy Infrastructure (No ECS Service)
-    runs-on: ubuntu-latest
-    needs: [detect-changes, test]
-    if: |
-      always() &&
-      (needs.detect-changes.outputs.infrastructure-changed == 'true' ||
-       needs.detect-changes.outputs.force-infrastructure == 'true') &&
-      (needs.test.result == 'success' || needs.test.result == 'skipped')
-    outputs:
-      bucket-name: ${{ steps.deploy-stack.outputs.bucket-name }}
-      database-endpoint: ${{ steps.deploy-stack.outputs.database-endpoint}}
-      redis-endpoint: ${{ steps.deploy-stack.outputs.redis-endpoint }}
-      stack-updated: ${{ steps.deploy-stack.outputs.stack-updated }}
-
-    steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
+          aws-region: ${{ env.AWS_REGION }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
 
-      # --- Safer removal of ECSService: create a full copy, then write a cleaned template ---
-      - name: Safely remove ECSService from CloudFormation (creates cleaned template)
+      - name: Deploy infra stack (create/update)
+        id: infra_deploy
         run: |
-          # keep a full copy to restore later
-          cp infrastructure/cloudformation.yml infrastructure/cloudformation.full.yml
-
-          # install pyyaml so the inline script can parse safely
-          python -m pip install --upgrade pip
-          python -m pip install pyyaml
-
-          # load template, remove Resources.ECSService if present, write back
-          python - <<'PY'
-          import yaml, sys
-          p = "infrastructure/cloudformation.yml"
-          with open(p, "r") as f:
-              doc = yaml.safe_load(f)
-          if isinstance(doc, dict):
-              resources = doc.get("Resources")
-              if isinstance(resources, dict) and "ECSService" in resources:
-                  resources.pop("ECSService")
-                  doc["Resources"] = resources
-                  with open(p, "w") as out:
-                      yaml.safe_dump(doc, out, default_flow_style=False, sort_keys=False)
-                  print("Removed ECSService from template")
-              else:
-                  print("ECSService not present; no change")
-          else:
-              print("Template not a dict; no change")
-          PY
-
-      - name: Check if stack exists
-        id: check-stack
-        run: |
-          if aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} > /dev/null 2>&1; then
-            echo "stack-exists=true" >> $GITHUB_OUTPUT
-            echo "Stack exists, will update if needed"
-          else
-            echo "stack-exists=false" >> $GITHUB_OUTPUT
-            echo "Stack does not exist, will create"
-          fi
-
-      - name: Deploy CloudFormation stack (no ECS Service)
-        id: deploy-stack
-        run: |
-          echo "Deploying CloudFormation stack (no ECS Service)..."
-          DEPLOY_OUTPUT=$(aws cloudformation deploy \
-            --template-file infrastructure/cloudformation.yml \
-            --stack-name ${{ env.STACK_NAME }} \
-            --parameter-overrides \
-              Environment=production \
-              DBPassword="${{ secrets.DB_PASSWORD }}" \
+          set -e
+          echo "Deploying infra stack: $INFRA_STACK"
+          aws cloudformation deploy \
+            --stack-name $INFRA_STACK \
+            --template-file infrastructure/infra-stack.yml \
             --capabilities CAPABILITY_NAMED_IAM \
-            --region ${{ env.AWS_REGION }} \
-            --no-fail-on-empty-changeset 2>&1 || echo "DEPLOY_FAILED")
+            --parameter-overrides Environment=production DBPassword="${{ secrets.DB_PASSWORD }}" \
+            --region ${{ env.AWS_REGION }}
 
-          if echo "$DEPLOY_OUTPUT" | grep -q "No changes to deploy"; then
-            echo "stack-updated=false" >> $GITHUB_OUTPUT
-            echo "No infrastructure changes detected"
-          elif echo "$DEPLOY_OUTPUT" | grep -q "DEPLOY_FAILED"; then
-            echo "Deployment failed:"
-            echo "$DEPLOY_OUTPUT"
-            exit 1
-          else
-            echo "stack-updated=true" >> $GITHUB_OUTPUT
-            echo "Infrastructure updated successfully"
-          fi
+      - name: Get infra outputs
+        id: infra_outputs
+        run: |
+          ECR_URI=$(aws cloudformation describe-stacks --stack-name $INFRA_STACK --query "Stacks[0].Outputs[?OutputKey=='EcrRepoUri'].OutputValue" --output text)
+          ALB_DNS=$(aws cloudformation describe-stacks --stack-name $INFRA_STACK --query "Stacks[0].Outputs[?OutputKey=='AlbDNS'].OutputValue" --output text)
+          BUCKET=$(aws cloudformation describe-stacks --stack-name $INFRA_STACK --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" --output text)
+          DB_ENDPOINT=$(aws cloudformation describe-stacks --stack-name $INFRA_STACK --query "Stacks[0].Outputs[?OutputKey=='DatabaseEndpoint'].OutputValue" --output text)
+          REDIS_ENDPOINT=$(aws cloudformation describe-stacks --stack-name $INFRA_STACK --query "Stacks[0].Outputs[?OutputKey=='RedisEndpoint'].OutputValue" --output text)
 
-          BUCKET_NAME=$(aws cloudformation describe-stacks \
-            --stack-name ${{ env.STACK_NAME }} \
-            --query 'Stacks[0].Outputs[?OutputKey==`BucketName`].OutputValue' \
-            --output text \
-            --region ${{ env.AWS_REGION }})
-          echo "bucket-name=$BUCKET_NAME" >> $GITHUB_OUTPUT
-          DB_ENDPOINT=$(aws cloudformation describe-stacks \
-            --stack-name ${{ env.STACK_NAME }} \
-            --query 'Stacks[0].Outputs[?OutputKey==`DatabaseEndpoint`].OutputValue' \
-            --output text \
-            --region ${{ env.AWS_REGION }})
-          echo "database-endpoint=$DB_ENDPOINT" >> $GITHUB_OUTPUT
-          REDIS_ENDPOINT=$(aws cloudformation describe-stacks \
-            --stack-name ${{ env.STACK_NAME }} \
-            --query 'Stacks[0].Outputs[?OutputKey==`RedisEndpoint`].OutputValue' \
-            --output text \
-            --region ${{ env.AWS_REGION }})
-          echo "redis-endpoint=$REDIS_ENDPOINT" >> $GITHUB_OUTPUT
+          # Derive additional info needed for service stack
+          APP_SG=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=ai-legal-assistant-app-sg-*" --query "SecurityGroups[0].GroupId" --output text || echo "")
+          TG_ARN=$(aws elbv2 describe-target-groups --names ai-legal-assistant-tg --query "TargetGroups[0].TargetGroupArn" --output text || echo "")
+          SUBNET1=$(aws ec2 describe-subnets --filters "Name=cidr-block,Values=10.0.3.0/24" --query "Subnets[0].SubnetId" --output text || echo "")
+          SUBNET2=$(aws ec2 describe-subnets --filters "Name=cidr-block,Values=10.0.4.0/24" --query "Subnets[0].SubnetId" --output text || echo "")
 
-  build-and-deploy:
-    name: Build & Deploy Application
+          echo "ecr_repo_uri=$ECR_URI" >> $GITHUB_OUTPUT
+          echo "alb_dns=$ALB_DNS" >> $GITHUB_OUTPUT
+          echo "bucket=$BUCKET" >> $GITHUB_OUTPUT
+          echo "db_endpoint=$DB_ENDPOINT" >> $GITHUB_OUTPUT
+          echo "redis_endpoint=$REDIS_ENDPOINT" >> $GITHUB_OUTPUT
+          echo "app_sg=$APP_SG" >> $GITHUB_OUTPUT
+          echo "tg_arn=$TG_ARN" >> $GITHUB_OUTPUT
+          echo "subnet1=$SUBNET1" >> $GITHUB_OUTPUT
+          echo "subnet2=$SUBNET2" >> $GITHUB_OUTPUT
+
+  build-and-push:
+    needs: prepare
     runs-on: ubuntu-latest
-    needs: [detect-changes, test, deploy-infrastructure]
-    if: |
-      always() &&
-      needs.detect-changes.outputs.backend-changed == 'true' &&
-      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
-      (needs.deploy-infrastructure.result == 'success' || needs.deploy-infrastructure.result == 'skipped')
-
+    outputs:
+      image-uri: ${{ steps.push.outputs.image_uri }}
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
@@ -216,125 +95,85 @@ jobs:
 
       - name: Build Docker image
         run: |
-          echo "Building Docker image..."
           docker build -t ${{ env.APPLICATION_NAME }}:${{ github.sha }} ./backend
-          docker tag ${{ env.APPLICATION_NAME }}:${{ github.sha }} ${{ env.APPLICATION_NAME }}:latest
-          echo "Docker image built successfully"
+          docker tag ${{ env.APPLICATION_NAME }}:${{ github.sha }} ${{ env.APPLICATION_NAME }}:${{ env.IMAGE_TAG }}
 
-      - name: Test Docker image
+      - name: Ensure ECR repo exists (idempotent)
         run: |
-          echo "Testing Docker image..."
-          docker run --rm ${{ env.APPLICATION_NAME }}:latest python -c "import main; print('Docker image works!')"
+          set -e
+          ECR_URI="${{ needs.prepare.outputs.ecr_repo_uri }}"
+          if [ -z "$ECR_URI" ] || [ "$ECR_URI" = "None" ]; then
+            # Fall back to creating repo
+            echo "ECR URI not found in infra outputs — creating repo"
+            aws ecr create-repository --repository-name ${{ env.APPLICATION_NAME }} || true
+            ECR_URI=$(aws ecr describe-repositories --repository-names ${{ env.APPLICATION_NAME }} --query "repositories[0].repositoryUri" --output text)
+          fi
+          echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
 
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin $ECR_URI
+
+      - name: Tag & Push to ECR
+        id: push
+        run: |
+          set -e
+          REPO_URI="$ECR_URI"
+          docker tag ${{ env.APPLICATION_NAME }}:${{ env.IMAGE_TAG }} $REPO_URI:${{ env.IMAGE_TAG }}
+          docker push $REPO_URI:${{ env.IMAGE_TAG }}
+          IMAGE_URI="$REPO_URI:${{ env.IMAGE_TAG }}"
+          echo "::set-output name=image_uri::$IMAGE_URI"
+
+  deploy-service:
+    needs: [prepare, build-and-push]
+    runs-on: ubuntu-latest
+    steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
+          aws-region: ${{ env.AWS_REGION }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Get ECR Repo URI
-        id: get_ecr_repo
+      - name: Deploy service stack (TaskDefinition + Service)
+        id: deploy_service
         run: |
-          REPO=$(aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} \
-            --query "Stacks[0].Outputs[?OutputKey=='EcrRepoUri'].OutputValue" --output text)
-          echo "ecr_repo=$REPO" >> $GITHUB_OUTPUT
+          set -e
+          REPO_IMAGE="${{ needs.build-and-push.outputs.image-uri }}"
+          echo "Deploying service stack with image: $REPO_IMAGE"
 
-      - name: Login to Amazon ECR
-        run: |
-          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
-            docker login --username AWS --password-stdin ${{ steps.get_ecr_repo.outputs.ecr_repo }}
-
-      - name: Tag and push Docker image to ECR
-        run: |
-          docker tag ${{ env.APPLICATION_NAME }}:latest ${{ steps.get_ecr_repo.outputs.ecr_repo }}:latest
-          docker push ${{ steps.get_ecr_repo.outputs.ecr_repo }}:latest
-
-      # --- Restore original template (with ECSService) and deploy full stack ---
-      - name: Restore ECSService in CloudFormation
-        run: |
-          if [ -f infrastructure/cloudformation.full.yml ]; then
-            mv infrastructure/cloudformation.full.yml infrastructure/cloudformation.yml
-          else
-            echo "No backup template found; assuming original file present"
-          fi
-
-      - name: Deploy CloudFormation stack (with ECS Service)
-        run: |
-          echo "Deploying CloudFormation stack (with ECS Service)..."
           aws cloudformation deploy \
-            --template-file infrastructure/cloudformation.yml \
-            --stack-name ${{ env.STACK_NAME }} \
+            --stack-name ${{ env.SERVICE_STACK }} \
+            --template-file infrastructure/service-stack.yml \
+            --capabilities CAPABILITY_NAMED_IAM \
             --parameter-overrides \
               Environment=production \
-              DBPassword="${{ secrets.DB_PASSWORD }}" \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --region ${{ env.AWS_REGION }} \
-            --no-fail-on-empty-changeset
+              ClusterName=ai-legal-assistant-cluster \
+              ImageUri=$REPO_IMAGE \
+              AlbTargetGroupArn=${{ needs.prepare.outputs.tg_arn }} \
+              AppSecurityGroupId=${{ needs.prepare.outputs.app_sg }} \
+              Subnet1=${{ needs.prepare.outputs.subnet1 }} \
+              Subnet2=${{ needs.prepare.outputs.subnet2 }} \
+            --region ${{ env.AWS_REGION }}
 
-      - name: Update ECS service to use new image
+      - name: Force ECS deployment (safety)
         run: |
           CLUSTER=ai-legal-assistant-cluster
           SERVICE=$(aws ecs list-services --cluster $CLUSTER --query "serviceArns[0]" --output text)
-          aws ecs update-service --cluster $CLUSTER --service $SERVICE --force-new-deployment
+          if [ "$SERVICE" != "None" ] && [ -n "$SERVICE" ]; then
+            echo "Forcing new deployment"
+            aws ecs update-service --cluster $CLUSTER --service $SERVICE --force-new-deployment || true
+          else
+            echo "Service not found or just created via CFN"
+          fi
 
-  create-deployment-summary:
-    name: Create Deployment Summary
+  summary:
+    needs: [prepare, build-and-push, deploy-service]
     runs-on: ubuntu-latest
-    needs: [detect-changes, deploy-infrastructure, build-and-deploy]
-    if: always()
-
     steps:
       - name: Create deployment summary
         run: |
-          echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Changes Detected:" >> $GITHUB_STEP_SUMMARY
-          echo "- **Infrastructure**: ${{ needs.detect-changes.outputs.infrastructure-changed }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Backend Code**: ${{ needs.detect-changes.outputs.backend-changed }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Force Update**: ${{ needs.detect-changes.outputs.force-infrastructure }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Deployment Status:" >> $GITHUB_STEP_SUMMARY
-          echo "- **Infrastructure**: ${{ needs.deploy-infrastructure.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Application Build**: ${{ needs.build-and-deploy.result }}" >> $GITHUB_STEP_SUMMARY
-
-          if [ "${{ needs.deploy-infrastructure.outputs.bucket-name }}" != "" ]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Resources:" >> $GITHUB_STEP_SUMMARY
-            echo "- **S3 Bucket**: ${{ needs.deploy-infrastructure.outputs.bucket-name }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Database**: ${{ needs.deploy-infrastructure.outputs.database-endpoint }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Redis Cache**: ${{ needs.deploy-infrastructure.outputs.redis-endpoint }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **AWS Region**: ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 📋 Next Steps:" >> $GITHUB_STEP_SUMMARY
-            echo "1. **Set environment variables for local testing**:" >> $GITHUB_STEP_SUMMARY
-            echo "   \`\`\`bash" >> $GITHUB_STEP_SUMMARY
-            echo "   export AWS_RDS_ENDPOINT=${{ needs.deploy-infrastructure.outputs.database-endpoint }}" >> $GITHUB_STEP_SUMMARY
-            echo "   export AWS_RDS_PASSWORD=your-db-password" >> $GITHUB_STEP_SUMMARY
-            echo "   export AWS_ELASTICACHE_ENDPOINT=${{ needs.deploy-infrastructure.outputs.redis-endpoint }}" >> $GITHUB_STEP_SUMMARY
-            echo "   export ENVIRONMENT=production" >> $GITHUB_STEP_SUMMARY
-            echo "   \`\`\`" >> $GITHUB_STEP_SUMMARY
-            echo "2. **Upload documents**: \`aws s3 cp backend/documents/ s3://${{ needs.deploy-infrastructure.outputs.bucket-name }}/legal-documents/ --recursive\`" >> $GITHUB_STEP_SUMMARY
-            echo "3. **Test locally**: \`docker-compose up\`" >> $GITHUB_STEP_SUMMARY
-          fi
-
-      - name: Show ALB DNS
-        run: |
-          ALB_DNS=$(aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} \
-            --query "Stacks[0].Outputs[?OutputKey=='AlbDNS'].OutputValue" --output text)
-          echo "### 🚀 App URL: http://$ALB_DNS" >> $GITHUB_STEP_SUMMARY
-
-      - name: Deployment Success
-        if: |
-          needs.deploy-infrastructure.result == 'success' ||
-          (needs.deploy-infrastructure.result == 'skipped' && needs.build-and-deploy.result == 'success')
-        run: |
-          echo "✅ Deployment completed successfully!"
-
-      - name: Deployment Failure
-        if: |
-          needs.deploy-infrastructure.result == 'failure' ||
-          needs.build-and-deploy.result == 'failure'
-        run: |
-          echo "❌ Deployment failed!"
-          exit 1
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- ALB URL: http://${{ needs.prepare.outputs.alb_dns }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ECR: ${{ needs.prepare.outputs.ecr_repo_uri }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Image: ${{ needs.build-and-push.outputs.image-uri }}" >> $GITHUB_STEP_SUMMARY

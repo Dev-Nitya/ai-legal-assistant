@@ -1,0 +1,73 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AI Legal Assistant - Service stack (TaskDefinition + ECS Service)'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+  ClusterName:
+    Type: String
+    Default: ai-legal-assistant-cluster
+  ImageUri:
+    Type: String
+    Description: "Full image URI (e.g. <account>.dkr.ecr.<region>.amazonaws.com/ai-legal-assistant:latest)"
+  AlbTargetGroupArn:
+    Type: String
+    Description: "ARN of the ALB target group (to register service)"
+  AppSecurityGroupId:
+    Type: String
+    Description: "App security group id"
+  Subnet1:
+    Type: String
+  Subnet2:
+    Type: String
+  TaskRoleArn:
+    Type: String
+    Description: "Task role ARN (optional)"
+    Default: ""
+
+Resources:
+  AppTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: ai-legal-assistant-task
+      Cpu: "512"
+      Memory: "1024"
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !If [ HasTaskRole, !Ref TaskRoleArn, !Ref "AWS::NoValue" ]
+      TaskRoleArn: !If [ HasTaskRole, !Ref TaskRoleArn, !Ref "AWS::NoValue" ]
+      ContainerDefinitions:
+        - Name: ai-legal-assistant
+          Image: !Ref ImageUri
+          PortMappings:
+            - ContainerPort: 8000
+          Environment:
+            - Name: ENVIRONMENT
+              Value: !Ref Environment
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Sub "/aws/ecs/ai-legal-assistant-${Environment}-${AWS::AccountId}"
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: ecs
+
+  AppService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref ClusterName
+      DesiredCount: 1
+      LaunchType: FARGATE
+      TaskDefinition: !Ref AppTaskDefinition
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: [ !Ref AppSecurityGroupId ]
+          Subnets: [ !Ref Subnet1, !Ref Subnet2 ]
+      LoadBalancers:
+        - ContainerName: ai-legal-assistant
+          ContainerPort: 8000
+          TargetGroupArn: !Ref AlbTargetGroupArn
+
+Conditions:
+  HasTaskRole: !Not [ !Equals [ !Ref TaskRoleArn, "" ] ]
