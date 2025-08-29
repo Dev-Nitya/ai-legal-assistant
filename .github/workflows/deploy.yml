@@ -134,7 +134,9 @@ jobs:
           DEPLOY_OUTPUT=$(aws cloudformation deploy \
             --template-file infrastructure/cloudformation.yml \
             --stack-name ${{ env.STACK_NAME }} \
-            --parameter-overrides Environment=production \
+            --parameter-overrides \
+              Environment=production \
+              DBPassword="${{ secrets.DB_PASSWORD }}" \
             --capabilities CAPABILITY_NAMED_IAM \
             --region ${{ env.AWS_REGION }} \
             --no-fail-on-empty-changeset 2>&1 || echo "DEPLOY_FAILED")
