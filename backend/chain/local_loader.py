@@ -11,6 +11,7 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
 
 from chain.utils import metadata_utils
+from config.settings import settings
 
 # Configuration
 DOCUMENTS_DIR = os.getenv("DOCUMENTS_DIR", "/app/documents")
@@ -133,7 +134,7 @@ def create_vector_store(docs: List[Document]):
     if not docs:
         print("Warning: No documents provided for vector store creation.")
         # Create an empty vector store that can be used
-        embeddings = OpenAIEmbeddings()
+        embeddings = OpenAIEmbeddings(api_key=settings.openai_api_key)
 
         # Create a minimal document to initialize the vector store
         dummy_doc = Document(
@@ -152,7 +153,7 @@ def create_vector_store(docs: List[Document]):
         return vector_store, [dummy_doc]
     
     try:
-        embeddings = OpenAIEmbeddings()
+        embeddings = OpenAIEmbeddings(api_key=settings.openai_api_key)
         os.makedirs(CHROMA_PERSIST_DIR, exist_ok=True)
 
         vector_store = Chroma.from_documents(
@@ -182,7 +183,7 @@ def get_or_create_vector_store():
     if is_cache_valid():
         try:
             print("Loading vector store from cache...")
-            embeddings = OpenAIEmbeddings()
+            embeddings = OpenAIEmbeddings(api_key=settings.openai_api_key)
             vector_store = Chroma(
                 embedding_function=embeddings,
                 persist_directory=CHROMA_PERSIST_DIR

@@ -27,37 +27,60 @@ class SecretsManager:
         fallback_env_var: environment variable to use if secret not found (e.g. "OPENAI_API_KEY")
         """
 
-        # Try secret manager first
+        # Try Secrets Manager first
         if self.secrets_client:
             try:
                 full_secret_name = f"ai-legal-assistant-{secret_name}-{self.environment}"
                 logger.info(f"🔑 Retrieving secret: {full_secret_name}")
-                response = self.secrets_client.get_secret_value(SecretId=full_secret_name)
+                logger.warning(f"🔑 Retrieving secret: {full_secret_name}")
 
+                # Avoid logging secret contents; only log that we attempted to retrieve
+                response = self.secrets_client.get_secret_value(SecretId=full_secret_name)
+                logger.warning(f"Retrieved secret for {full_secret_name} (response keys: {list(response.keys())})")
+
+                # Handle SecretString (JSON or plain text)
                 if 'SecretString' in response:
-                    secret_data = json.loads(response['SecretString'])
-                    # Handle both flat strings and JSON objects
+                    secret_str = response.get('SecretString') or ""
+                    try:
+                        secret_data = json.loads(secret_str)
+                    except json.JSONDecodeError:
+                        # Plain string (e.g. bucket name) — return as-is
+                        logger.info(f"🔑 Retrieved plain secret for {full_secret_name} (len={len(secret_str)})")
+                        return secret_str
+                    
+                    # If JSON, prefer common keys (api_key) or requested key
                     if isinstance(secret_data, dict):
-                        return secret_data.get('api_key') or secret_data.get(secret_name)
+                        return secret_data.get('api_key') or secret_data.get(secret_name) or json.dumps(secret_data)
                     return secret_data
-            
+
+                # Handle SecretBinary
+                if 'SecretBinary' in response:
+                    try:
+                        import base64
+                        decoded = base64.b64decode(response['SecretBinary'])
+                        try:
+                            return json.loads(decoded)
+                        except json.JSONDecodeError:
+                            return decoded.decode('utf-8', errors='replace')
+                    except Exception as e:
+                        logger.error(f"❌ Error decoding SecretBinary for {full_secret_name}: {e}")
+
             except ClientError as e:
-                error_code = e.response['Error']['Code']
+                error_code = e.response.get('Error', {}).get('Code')
                 if error_code == 'ResourceNotFoundException':
                     logger.warning(f"🔍 Secret {secret_name} not found in AWS Secrets Manager")
                 else:
                     logger.error(f"❌ Error retrieving secret {secret_name}: {e}")
-                    
             except Exception as e:
                 logger.error(f"❌ Unexpected error retrieving secret {secret_name}: {e}")
 
-        # Fallback to environment variable
+        # Fallback to environment variable if provided
         if fallback_env_var:
             env_value = os.getenv(fallback_env_var)
             if env_value:
                 logger.info(f"📝 Using environment variable for {secret_name}")
                 return env_value
-        
+
         logger.error(f"❌ No secret found for {secret_name}")
         return None
 

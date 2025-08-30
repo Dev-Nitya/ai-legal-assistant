@@ -58,7 +58,6 @@ class Settings:
     
     # REDIS SETTINGS
     @property
-    @property
     def redis_url(self) -> str:
         """
         Get Redis connection URL
@@ -76,10 +75,23 @@ class Settings:
             elasticache_endpoint = os.getenv('AWS_ELASTICACHE_ENDPOINT')
             if elasticache_endpoint:
                 return f"redis://{elasticache_endpoint}:6379"
+                    
 
         # Development: Use local Redis
         return os.getenv('REDIS_URL', 'redis://localhost:6379')
     
+    @property
+    def redis_host(self) -> str:
+        elasticache_from_secret = secrets_manager.get_secret("elasticache_endpoint", "AWS_ELASTICACHE_ENDPOINT")
+        if elasticache_from_secret:
+            return f"redis://{elasticache_from_secret}"
+        
+        return os.getenv('REDIS_URL', 'redis://localhost:6379')
+        
+    @property
+    def redis_port(self) -> str:
+        return "6379"
+
     @property
     def aws_region(self) -> str:
         """AWS region to use for clients (default us-east-1)."""
