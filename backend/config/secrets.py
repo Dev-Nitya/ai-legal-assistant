@@ -21,7 +21,6 @@ class SecretsManager:
         except (NoCredentialsError, Exception) as e:
             logger.warning(f"⚠️ AWS Secrets Manager unavailable, using environment variables: {e}")
 
-    @lru_cache(maxsize=10)
     def get_secret(self, secret_name: str, fallback_env_var: Optional[str] = None) -> Optional[str]:
         """Get secret from AWS Secrets Manager with environment variable fallback
         secret_name: short key (e.g. "openai_api_key") — full secret name = ai-legal-assistant-{secret_name}-{environment}
@@ -32,6 +31,7 @@ class SecretsManager:
         if self.secrets_client:
             try:
                 full_secret_name = f"ai-legal-assistant-{secret_name}-{self.environment}"
+                logger.info(f"🔑 Retrieving secret: {full_secret_name}")
                 response = self.secrets_client.get_secret_value(SecretId=full_secret_name)
 
                 if 'SecretString' in response:

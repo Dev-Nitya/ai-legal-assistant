@@ -9,6 +9,7 @@ import logging
 
 from requests import Session
 
+from config.settings import settings
 from config.database import get_db
 from schemas.chat import EnhancedChatRequest, EnhancedChatResponse
 from schemas.errors import ValidationErrorResponse
@@ -100,7 +101,7 @@ async def enhanced_chat(
         context = format_context(relevant_docs)
 
         # Step 7: Use LLM to generate answer
-        llm = ChatOpenAI(temperature=0, model="gpt-4o-mini")
+        llm = ChatOpenAI(temperature=0, model="gpt-4o-mini", openai_api_key=settings.openai_api_key)
 
         if request.use_tools and confidence < 0.7:
             print(f"Confidence low ({confidence:.2f}), using tools.")
