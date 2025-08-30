@@ -208,14 +208,20 @@ Resources:
       Description: Redis subnet group
       SubnetIds: [ !Ref PrivateSubnet1, !Ref PrivateSubnet2 ]
 
-  RedisCluster:
-    Type: AWS::ElastiCache::CacheCluster
+  RedisReplicationGroup:
+    Type: AWS::ElastiCache::ReplicationGroup
     Properties:
+      ReplicationGroupId: !Sub "ai-redis-${Environment}"
+      ReplicationGroupDescription: "Redis for AI Legal Assistant"
       Engine: redis
+      EngineVersion: "7.1"
       CacheNodeType: cache.t4g.micro
-      NumCacheNodes: 1
-      VpcSecurityGroupIds: [ !Ref CacheSecurityGroup ]
+      NumNodeGroups: 1         # one shard
+      ReplicasPerNodeGroup: 0  # single primary, no replicas
+      AutomaticFailoverEnabled: false
+      MultiAZEnabled: false
       CacheSubnetGroupName: !Ref CacheSubnetGroup
+      SecurityGroupIds: [ !Ref CacheSecurityGroup ]
 
   # IAM Role for ECS tasks
   ApplicationRole:
@@ -302,6 +308,12 @@ Outputs:
     Value: !GetAtt PostgreSQLDatabase.Endpoint.Address
     Export: { Name: !Sub "${AWS::StackName}-DatabaseEndpoint" }
 
-  RedisEndpoint:
-    Value: !GetAtt RedisCluster.RedisEndpoint.Address
-    Export: { Name: !Sub "${AWS::StackName}-RedisEndpoint" }
+  RedisPrimaryEndpoint:
+    Description: Primary endpoint for Redis
+    Value: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Address
+    Export: { Name: !Sub "${AWS::StackName}-RedisPrimaryEndpoint" }
+
+  RedisReaderEndpoint:
+    Description: Reader endpoint (if replicas exist, otherwise same as primary)
+    Value: !GetAtt RedisReplicationGroup.ReaderEndPoint.Address
+    Export: { Name: !Sub "${AWS::StackName}-RedisReaderEndpoint" }

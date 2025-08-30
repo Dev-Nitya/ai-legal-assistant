@@ -200,7 +200,11 @@ jobs:
           # from stack outputs
           ECR_URI=$(aws cloudformation describe-stacks --stack-name $INFRA_STACK --query "Stacks[0].Outputs[?OutputKey=='EcrRepoUri'].OutputValue" --output text)
           ALB_DNS=$(aws cloudformation describe-stacks --stack-name $INFRA_STACK --query "Stacks[0].Outputs[?OutputKey=='AlbDNS'].OutputValue" --output text)
-          REDIS_ENDPOINT=$(aws cloudformation describe-stacks --stack-name $INFRA_STACK --query "Stacks[0].Outputs[?OutputKey=='RedisEndpoint'].OutputValue" --output text)
+          # Use the exported RedisPrimaryEndpoint output (matches infra-stack.yml Export name)
+          REDIS_PRIMARY=$(aws cloudformation describe-stacks --stack-name $INFRA_STACK --query "Stacks[0].Outputs[?OutputKey=='RedisPrimaryEndpoint'].OutputValue" --output text)
+          REDIS_READER=$(aws cloudformation describe-stacks --stack-name $INFRA_STACK --query "Stacks[0].Outputs[?OutputKey=='RedisReaderEndpoint'].OutputValue" --output text)
+          # prefer primary, fall back to reader if primary missing
+          REDIS_ENDPOINT=${REDIS_PRIMARY:-$REDIS_READER}
 
           # from stack resources (physical IDs)
           APP_SG=$(aws cloudformation describe-stack-resources --stack-name $INFRA_STACK --logical-resource-id AppSecurityGroup --query "StackResources[0].PhysicalResourceId" --output text)
