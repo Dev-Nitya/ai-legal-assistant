@@ -12,7 +12,7 @@ class SecretsManager:
     def __init__(self):
         """Initialize AWS Secrets Manager client"""
         self.region = os.getenv("AWS_REGION", "us-east-1")
-        self.environment = os.getenv("ENVIRONMENT", "development")
+        self.environment = os.getenv("ENVIRONMENT", "production")
         self.secrets_client = None
 
         try:
