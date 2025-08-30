@@ -134,7 +134,7 @@ class Settings:
         """
         return self.aws_s3_bucket
     
-    property
+    @property
     def openai_api_key(self) -> str:
         key = secrets_manager.get_openai_api_key()
         if not key:
