@@ -12,8 +12,10 @@ from langchain_openai import OpenAIEmbeddings
 from botocore.exceptions import ClientError, NoCredentialsError
 import tempfile
 
+import logging
 from chain.utils import metadata_utils
 from config.settings import settings
+from config.secrets import secrets_manager
 
 class AWSDocumentsLoader:
     def __init__(self):
@@ -34,6 +36,29 @@ class AWSDocumentsLoader:
         except Exception as e:
             print(f"Error initializing AWS clients: {e}")
             raise
+
+    def _resolve_openai_key(self) -> Optional[str]:
+        """Resolve OpenAI API key: env -> settings -> Secrets Manager.
+        Secrets Manager value is expected to be a plain string (not JSON)."""
+        # 1) Environment variable
+        key = os.getenv("OPENAI_API_KEY")
+        if key:
+            logging.info("OpenAI key resolved from env (len=%d)", len(key))
+            return key
+
+        # 2) settings attribute
+        key = getattr(settings, "openai_api_key", None)
+        if key:
+            logging.info("OpenAI key resolved from settings (len=%d)", len(key))
+            return key
+
+        # 3) Secrets Manager (assume plain string)
+        secret = secrets_manager.get_secret("openai_api_key", "OPENAI_API_KEY")
+        if secret:
+            logging.info("OpenAI key resolved from Secrets Manager (len=%d)", len(secret))
+            return secret
+        
+        return None
 
     def list_s3_documents(self) -> List[dict]:
         """List all PDF documents in the S3 bucket"""
@@ -209,15 +234,21 @@ class AWSDocumentsLoader:
     
     def create_vector_store(self, docs: List[Document]):
         """Create vector store from documents"""
+        openai_key = self._resolve_openai_key()
+
         if not docs:
             print("Warning: No documents provided to create vector store")
             # Create a placeholder vector store
-            embeddings = OpenAIEmbeddings(api_key=settings.openai_api_key)
             dummy_doc = Document(
                 page_content="No legal documents found in S3. Please upload PDF documents to the configured S3 bucket.",
                 metadata={"source_file": "placeholder", "document_type": "placeholder"}
             )
+            if not openai_key:
+                print("No OpenAI key available — returning placeholder document without embeddings/vector store")
+                return None, [dummy_doc]
             
+            embeddings = OpenAIEmbeddings(api_key=openai_key)
+
             os.makedirs(self.chroma_persist_dir, exist_ok=True)
             vector_store = Chroma.from_documents(
                 documents=[dummy_doc],
@@ -229,7 +260,12 @@ class AWSDocumentsLoader:
             return vector_store, [dummy_doc]
         
         try:
-            embeddings = OpenAIEmbeddings(api_key=settings.openai_api_key)
+            if not openai_key:
+                raise RuntimeError(
+                    "OpenAI API key not found. Set OPENAI_API_KEY env var or ensure secret "
+                    "ai-legal-assistant-openai_api_key-<env> exists and is readable by the task role."
+                )
+            embeddings = OpenAIEmbeddings(api_key=openai_key)
             os.makedirs(self.chroma_persist_dir, exist_ok=True)
             
             vector_store = Chroma.from_documents(
@@ -261,8 +297,9 @@ class AWSDocumentsLoader:
         # Check if we can load from cache
         if self.is_cache_valid():
             try:
+                openai_key = self._resolve_openai_key()
                 print("Loading vector store from cache...")
-                embeddings = OpenAIEmbeddings(api_key=settings.openai_api_key)
+                embeddings = OpenAIEmbeddings(api_key=openai_key)
                 vector_store = Chroma(
                     persist_directory=self.chroma_persist_dir,
                     embedding_function=embeddings

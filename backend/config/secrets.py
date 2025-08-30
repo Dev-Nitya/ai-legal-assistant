@@ -4,7 +4,6 @@ import os
 from typing import Dict, Optional
 from botocore.exceptions import ClientError, NoCredentialsError
 import logging
-from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 

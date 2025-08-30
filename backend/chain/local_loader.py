@@ -12,11 +12,32 @@ from langchain_chroma import Chroma
 
 from chain.utils import metadata_utils
 from config.settings import settings
+from config.secrets import secrets_manager
 
 # Configuration
 DOCUMENTS_DIR = os.getenv("DOCUMENTS_DIR", "/app/documents")
 CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "/app/chroma_db")
 CACHE_FILE = os.path.join(CHROMA_PERSIST_DIR, "document_cache.json")
+
+def resolve_openai_key():
+        """Resolve OpenAI API key: env -> settings -> Secrets Manager.
+        Secrets Manager value is expected to be a plain string (not JSON)."""
+        # 1) Environment variable
+        key = os.getenv("OPENAI_API_KEY")
+        if key:
+            return key
+
+        # 2) settings attribute
+        key = getattr(settings, "openai_api_key", None)
+        if key:
+            return key
+
+        # 3) Secrets Manager (assume plain string)
+        secret = secrets_manager.get_secret("openai_api_key", "OPENAI_API_KEY")
+        if secret:
+            return secret
+        
+        return None
 
 def discover_documents() -> List[str]:
     """Discover PDF documents in the documents directory and subdirectories"""
@@ -131,16 +152,21 @@ def is_cache_valid() -> bool:
 
 def create_vector_store(docs: List[Document]):
     """Create vector store from documents"""
+    openai_key = resolve_openai_key()
     if not docs:
-        print("Warning: No documents provided for vector store creation.")
-        # Create an empty vector store that can be used
-        embeddings = OpenAIEmbeddings(api_key=settings.openai_api_key)
-
         # Create a minimal document to initialize the vector store
         dummy_doc = Document(
             page_content="This is a placeholder document. No legal documents were found.",
             metadata={"source_file": "placeholder", "document_type": "placeholder"}
         )
+
+        if not openai_key:
+            print("No OpenAI key available — returning placeholder document without embeddings/vector store")
+            return None, [dummy_doc]
+        
+        print("Warning: No documents provided for vector store creation.")
+        # Create an empty vector store that can be used
+        embeddings = OpenAIEmbeddings(api_key=openai_key)
 
         os.makedirs(CHROMA_PERSIST_DIR, exist_ok=True)
         vector_store = Chroma.from_documents(
@@ -153,7 +179,12 @@ def create_vector_store(docs: List[Document]):
         return vector_store, [dummy_doc]
     
     try:
-        embeddings = OpenAIEmbeddings(api_key=settings.openai_api_key)
+        if not openai_key:
+            raise RuntimeError(
+                "OpenAI API key not found. Set OPENAI_API_KEY env var or ensure secret "
+                "ai-legal-assistant-openai_api_key-<env> exists and is readable by the task role."
+            )
+        embeddings = OpenAIEmbeddings(api_key=openai_key)
         os.makedirs(CHROMA_PERSIST_DIR, exist_ok=True)
 
         vector_store = Chroma.from_documents(
@@ -182,8 +213,14 @@ def get_or_create_vector_store():
     # Check if we can load from cache
     if is_cache_valid():
         try:
+            openai_key = resolve_openai_key()
+            if not openai_key:
+                raise RuntimeError(
+                    "OpenAI API key not found. Set OPENAI_API_KEY env var or ensure secret "
+                    "ai-legal-assistant-openai_api_key-<env> exists and is readable by the task role."
+                )
             print("Loading vector store from cache...")
-            embeddings = OpenAIEmbeddings(api_key=settings.openai_api_key)
+            embeddings = OpenAIEmbeddings(api_key=openai_key)
             vector_store = Chroma(
                 embedding_function=embeddings,
                 persist_directory=CHROMA_PERSIST_DIR
