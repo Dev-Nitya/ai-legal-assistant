@@ -69,8 +69,17 @@ Resources:
                   - s3:GetObject
                   - s3:ListBucket
                 Resource:
-                  - !Join ["", ["arn:aws:s3:::", !ImportValue !Sub "${InfraStackName}-BucketName"]]
-                  - !Join ["", ["arn:aws:s3:::", !ImportValue !Sub "${InfraStackName}-BucketName", "/*"]]
+                  - !Join
+                    - ""
+                    - - "arn:aws:s3:::"
+                      - !ImportValue
+                        !Sub "${InfraStackName}-BucketName"
+                  - !Join
+                    - ""
+                    - - "arn:aws:s3:::"
+                      - !ImportValue
+                        !Sub "${InfraStackName}-BucketName"
+                      - "/*"
 
   AppLogGroup:
     Type: AWS::Logs::LogGroup
