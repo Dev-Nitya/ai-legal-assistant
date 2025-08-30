@@ -6,8 +6,6 @@ from botocore.exceptions import ClientError, NoCredentialsError
 import logging
 from functools import lru_cache
 
-from config.settings import settings
-
 logger = logging.getLogger(__name__)
 
 class SecretsManager:
@@ -47,14 +45,11 @@ class SecretsManager:
                 error_code = e.response['Error']['Code']
                 if error_code == 'ResourceNotFoundException':
                     logger.warning(f"🔍 Secret {secret_name} not found in AWS Secrets Manager")
-                    return settings[secret_name]
                 else:
                     logger.error(f"❌ Error retrieving secret {secret_name}: {e}")
-                    return settings[secret_name]
                     
             except Exception as e:
                 logger.error(f"❌ Unexpected error retrieving secret {secret_name}: {e}")
-                return settings[secret_name]
 
         # Fallback to environment variable
         if fallback_env_var:
