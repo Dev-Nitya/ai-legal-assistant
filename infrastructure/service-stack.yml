@@ -73,12 +73,12 @@ Resources:
                     - ""
                     - - "arn:aws:s3:::"
                       - !ImportValue
-                        !Sub "${InfraStackName}-BucketName"
+                          'Fn::Sub': "${InfraStackName}-BucketName"
                   - !Join
                     - ""
                     - - "arn:aws:s3:::"
                       - !ImportValue
-                        !Sub "${InfraStackName}-BucketName"
+                          'Fn::Sub': "${InfraStackName}-BucketName"
                       - "/*"
 
   AppLogGroup:
