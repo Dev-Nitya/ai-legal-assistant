@@ -39,6 +39,12 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
 
+  AppLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${Environment}-app"
+      RetentionInDays: 7
+
   AppTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -54,11 +60,11 @@ Resources:
           Image: !Ref ImageUri
           Essential: true
           PortMappings:
-            - ContainerPort: 8000        # <-- changed from 3000 to 8000
+            - ContainerPort: 8000
           LogConfiguration:
             LogDriver: awslogs
             Options:
-              awslogs-group: !Sub "/ecs/${Environment}-app"
+              awslogs-group: !Ref AppLogGroup
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: ecs
 
