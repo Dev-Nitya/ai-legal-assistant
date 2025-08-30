@@ -147,9 +147,9 @@ jobs:
           fi
 
           # Optional: app-level AWS creds (only if you want to store them)
-          if [ -n "${APP_AWS_ACCESS_KEY_ID:-}" ] && [ -n "${APP_AWS_SECRET_ACCESS_KEY:-}" ]; then
+          if [ -n "${AWS_ACCESS_KEY_ID:-}" ] && [ -n "${AWS_SECRET_ACCESS_KEY:-}" ]; then
             payload=$(printf '{"aws_access_key_id":"%s","aws_secret_access_key":"%s"}' \
-              "${APP_AWS_ACCESS_KEY_ID:-}" "${APP_AWS_SECRET_ACCESS_KEY:-}")
+              "${AWS_ACCESS_KEY_ID:-}" "${AWS_SECRET_ACCESS_KEY:-}")
             create_or_update_secret "$(aws_secret_name aws_credentials)" "$payload"
           else
             echo "App AWS credentials not provided — skipping"
