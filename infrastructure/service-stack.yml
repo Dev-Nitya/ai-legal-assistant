@@ -23,6 +23,10 @@ Parameters:
   Subnet2:
     Type: String
     Description: Subnet ID 2 for ECS tasks
+  InfraStackName:
+    Type: String
+    Default: ai-legal-assistant-infra
+    Description: CloudFormation stack name that exports the DocumentsBucket (used to import bucket name)
 
 Resources:
   ECSTaskExecutionRole:
@@ -65,8 +69,8 @@ Resources:
                   - s3:GetObject
                   - s3:ListBucket
                 Resource:
-                  - !Sub "arn:aws:s3:::${BucketName}-${Environment}-${AWS::AccountId}"
-                  - !Sub "arn:aws:s3:::${BucketName}-${Environment}-${AWS::AccountId}/*"
+                  - !Join ["", ["arn:aws:s3:::", !ImportValue !Sub "${InfraStackName}-BucketName"]]
+                  - !Join ["", ["arn:aws:s3:::", !ImportValue !Sub "${InfraStackName}-BucketName", "/*"]]
 
   AppLogGroup:
     Type: AWS::Logs::LogGroup
