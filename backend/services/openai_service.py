@@ -62,8 +62,53 @@ class OpenAIService:
         self.track_costs = True
         self.log_detailed_usage = True
         
+        self.MAX_RETRIES = 3
+        self.INITIAL_BACKOFF_SECONDS = 1
+        self.BACKOFF_FACTOR = 2
+        self.FALLBACK_MODEL = "gpt-3.5-turbo"
+
         logger.info("OpenAI service initialized with cost tracking enabled")
     
+    async def _call_with_retry_and_downgrade(self, call_coroutine_factory, requested_model: str):
+        """
+        call_coro_factory: a no-arg async factory returning the coroutine that performs the OpenAI call
+        requested_model: model string originally requested
+
+        Returns: tuple(result_dict, model_used, error_or_none)
+        - result_dict: structured result (matching existing contract), or None on hard failure
+        - model_used: model that produced result (or last tried)
+        - error_or_none: exception string if failed
+        """
+        import asyncio
+        model_to_try = requested_model or self.default_model
+        attempt = 0
+        last_exec = None
+
+        while attempt < self.MAX_RETRIES:
+            attempt += 1
+            try:
+                # Create the coroutine and await it
+                coro = call_coroutine_factory(model_to_try)
+                result = await coro
+                return result, model_to_try, None
+            except Exception as e:
+                last_exec = e
+                wait = self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** (attempt - 1))
+                logger.warning(f"OpenAI call failed (model={model_to_try}, attempt={attempt}): {e}. Backing off {wait}s")
+                # small jitter
+                await asyncio.sleep(wait + (0.1 * attempt))
+
+                # if this was a high-tier model, after first full cycle fall back to cheaper model
+                if attempt >= self.MAX_RETRIES and model_to_try != self.FALLBACK_MODEL:
+                    logger.info(f"Downgrading model {model_to_try} -> {self.FALLBACK_MODEL} and retrying")
+                    model_to_try = self.FALLBACK_MODEL
+                    attempt = 0  # reset attempts for fallback model
+                    last_exec = None
+                    continue
+
+         # all retries failed
+        return None, model_to_try, str(last_exec)
+
     async def chat_completion(self, 
                             messages: List[Dict[str, str]], 
                             user_id: str,
@@ -72,7 +117,8 @@ class OpenAIService:
                             temperature: float = None,
                             **kwargs) -> Dict[str, Any]:
         """
-        Make a chat completion request with automatic cost tracking.
+        Wrapper around the original chat call that uses retries, model downgrade and graceful fallback.
+        Returns a dict with at least the "response" key for existing callers.
         
         Args:
             messages: Chat messages in OpenAI format [{"role": "user", "content": "Hello"}]
@@ -104,69 +150,106 @@ class OpenAIService:
         max_tokens = max_tokens or self.default_max_tokens
         temperature = temperature if temperature is not None else self.default_temperature
         
-        # Step 2: Log the request for debugging
-        logger.info(f"🤖 Making OpenAI request for user {user_id}: {model}, max_tokens={max_tokens}")
-        
-        start_time = datetime.utcnow()
-        
-        try:
-            # Step 3: Make the actual OpenAI API call
-            openai_response = await self.client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                **kwargs
-            )
+        # Factory to create the actual call coroutine using the given model
+        def factory(model_to_use):
+            async def _call(model_override=model_to_use):
+                
+                # Step 2: Log the request for debugging
+                logger.info(f"🤖 Making OpenAI request for user {user_id}: {model}, max_tokens={max_tokens}")
             
-            # Step 4: Extract the AI's response content
-            ai_content = self._extract_response_content(openai_response)
-            
-            # Step 5: Extract REAL token usage from OpenAI response
-            real_usage = self._extract_real_token_usage(openai_response)
-            
-            # Step 6: Calculate EXACT cost using real token counts
-            exact_cost = self._calculate_exact_cost(model, real_usage)
-            
-            # Step 7: Record the REAL spending for this user
-            if self.track_costs and user_id:
-                await self._record_real_cost(user_id, exact_cost, real_usage, model)
-            
-            # Step 8: Calculate request timing
-            end_time = datetime.utcnow()
-            request_duration = (end_time - start_time).total_seconds()
-            
-            # Step 9: Build comprehensive response with all information
-            result = {
-                "response": ai_content,
-                "cost_info": {
-                    "actual_cost_usd": exact_cost,
-                    "input_tokens": real_usage["input_tokens"],
-                    "output_tokens": real_usage["output_tokens"],
-                    "total_tokens": real_usage["total_tokens"],
-                    "model": model,
-                    "cost_per_token": exact_cost / real_usage["total_tokens"] if real_usage["total_tokens"] > 0 else 0
-                },
-                "metadata": {
-                    "request_duration_seconds": request_duration,
-                    "timestamp": end_time.isoformat(),
-                    "model_used": model,
-                    "max_tokens_requested": max_tokens,
-                    "temperature": temperature,
-                    "user_id": user_id
+                start_time = datetime.utcnow()
+
+                # Step 3: Make the actual OpenAI API call
+                openai_response = await self.client.chat.completions.create(
+                    model=model_override,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    **kwargs
+                )
+                
+                # Step 4: Extract the AI's response content
+                ai_content = self._extract_response_content(openai_response)
+                
+                # Step 5: Extract REAL token usage from OpenAI response
+                real_usage = self._extract_real_token_usage(openai_response)
+                
+                # Step 6: Calculate EXACT cost using real token counts
+                exact_cost = self._calculate_exact_cost(model, real_usage)
+                
+                # Step 7: Record the REAL spending for this user
+                if self.track_costs and user_id:
+                    await self._record_real_cost(user_id, exact_cost, real_usage, model)
+                
+                # Step 8: Calculate request timing
+                end_time = datetime.utcnow()
+                request_duration = (end_time - start_time).total_seconds()
+                
+                # Step 9: Build comprehensive response with all information
+                result = {
+                    "response": ai_content,
+                    "cost_info": {
+                        "actual_cost_usd": exact_cost,
+                        "input_tokens": real_usage["input_tokens"],
+                        "output_tokens": real_usage["output_tokens"],
+                        "total_tokens": real_usage["total_tokens"],
+                        "model": model,
+                        "cost_per_token": exact_cost / real_usage["total_tokens"] if real_usage["total_tokens"] > 0 else 0
+                    },
+                    "metadata": {
+                        "request_duration_seconds": request_duration,
+                        "timestamp": end_time.isoformat(),
+                        "model_used": model,
+                        "max_tokens_requested": max_tokens,
+                        "temperature": temperature,
+                        "user_id": user_id
+                    }
                 }
-            }
-            
-            # Step 10: Log successful request with real costs
-            logger.info(f"✅ OpenAI request completed for user {user_id}: "
-                       f"${exact_cost:.6f} ({real_usage['total_tokens']} tokens, {request_duration:.2f}s)")
-            
+                
+                # Step 10: Log successful request with real costs
+                logger.info(f"✅ OpenAI request completed for user {user_id}: "
+                        f"${exact_cost:.6f} ({real_usage['total_tokens']} tokens, {request_duration:.2f}s)")
+                
+                return result
+            return _call
+        
+        # Use the retry and downgrade helper
+        result, used_model, error = await self._call_with_retry_and_downgrade(factory, model)
+        
+        if result is not None:
             return result
-            
-        except Exception as e:
-            logger.error(f"❌ OpenAI request failed for user {user_id}: {e}")
-            raise
+        
+        # Fallback: return a predictable, user-friendly response instead of raising
+        logger.error(f"OpenAI service unavailable after retries. last error: {error}")
+
+        fallback_text = (
+            "The AI service is temporarily unavailable. "
+            "This feature is currently degraded. Please try again in a few minutes "
+            "or contact support if the issue persists."
+        )
+        return {
+            "response": fallback_text,
+            "cost_info": {"actual_cost_usd": 0.0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "model": used_model},
+            "error": str(error),
+            "metadata": {"model_used": used_model, "user_id": user_id}
+        }
     
+    async def ping(self, timeout_seconds: int = 5) -> bool:
+        """
+        Lightweight ping - tries a minimal request and returns True if successful.
+        """
+        try:
+            # use fallback model and tiny token limit to reduce cost
+            dummy = await self.chat_completion(messages=[{"role":"system","content":"ping"},{"role":"user","content":"hi"}],
+                                              user_id="healthcheck",
+                                              model=self.FALLBACK_MODEL,
+                                              max_tokens=1,
+                                              temperature=0.0)
+            # If we get a 'response' and no 'error', consider healthy
+            return dummy is not None and "error" not in dummy
+        except Exception:
+            return False
+
     def _extract_response_content(self, openai_response: Any) -> str:
         """
         Extract the actual AI response text from OpenAI's response object.

@@ -9,7 +9,7 @@ import logging
 
 from requests import Session
 
-from backend.config.database import get_db
+from config.database import get_db
 from schemas.chat import EnhancedChatRequest, EnhancedChatResponse
 from schemas.errors import ValidationErrorResponse
 from chain.loader import vectorstore
