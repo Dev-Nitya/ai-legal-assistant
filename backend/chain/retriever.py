@@ -3,7 +3,6 @@ import re
 from langchain.retrievers import EnsembleRetriever
 from langchain_community.retrievers import BM25Retriever
 from langchain.schema import Document
-from langchain_openai import OpenAIEmbeddings
 from typing import List, Dict, Optional, Any
 
 from chain.loader import vectorstore

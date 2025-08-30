@@ -212,7 +212,7 @@ class AWSDocumentsLoader:
         if not docs:
             print("Warning: No documents provided to create vector store")
             # Create a placeholder vector store
-            embeddings = OpenAIEmbeddings()
+            embeddings = OpenAIEmbeddings(api_key=settings.openai_api_key)
             dummy_doc = Document(
                 page_content="No legal documents found in S3. Please upload PDF documents to the configured S3 bucket.",
                 metadata={"source_file": "placeholder", "document_type": "placeholder"}
@@ -229,7 +229,7 @@ class AWSDocumentsLoader:
             return vector_store, [dummy_doc]
         
         try:
-            embeddings = OpenAIEmbeddings()
+            embeddings = OpenAIEmbeddings(api_key=settings.openai_api_key)
             os.makedirs(self.chroma_persist_dir, exist_ok=True)
             
             vector_store = Chroma.from_documents(
@@ -262,7 +262,7 @@ class AWSDocumentsLoader:
         if self.is_cache_valid():
             try:
                 print("Loading vector store from cache...")
-                embeddings = OpenAIEmbeddings()
+                embeddings = OpenAIEmbeddings(api_key=settings.openai_api_key)
                 vector_store = Chroma(
                     persist_directory=self.chroma_persist_dir,
                     embedding_function=embeddings
