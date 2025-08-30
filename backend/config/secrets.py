@@ -25,7 +25,10 @@ class SecretsManager:
 
     @lru_cache(maxsize=10)
     def get_secret(self, secret_name: str, fallback_env_var: Optional[str] = None) -> Optional[str]:
-        """Get secret from AWS Secrets Manager with environment variable fallback"""
+        """Get secret from AWS Secrets Manager with environment variable fallback
+        secret_name: short key (e.g. "openai_api_key") — full secret name = ai-legal-assistant-{secret_name}-{environment}
+        fallback_env_var: environment variable to use if secret not found (e.g. "OPENAI_API_KEY")
+        """
 
         # Try secret manager first
         if self.secrets_client:
@@ -83,10 +86,27 @@ class SecretsManager:
                 response = self.secrets_client.get_secret_value(SecretId=secret_name)
                 
                 if 'SecretString' in response:
-                    return json.loads(response['SecretString'])
+                    data = json.loads(response['SecretString'])
+                    # Expect keys: username, password, host, port, database
+                    if isinstance(data, dict):
+                        return {
+                            "username": data.get("username"),
+                            "password": data.get("password"),
+                            "host": data.get("host"),
+                            "port": data.get("port"),
+                            "database": data.get("database")
+                        }
         except Exception as e:
             logger.warning(f"Database credentials not found: {e}")
         
+        # Fallback to env vars if present
+        username = os.getenv("AWS_RDS_USERNAME")
+        password = os.getenv("AWS_RDS_PASSWORD")
+        host = os.getenv("AWS_RDS_ENDPOINT")
+        port = os.getenv("AWS_RDS_PORT")
+        database = os.getenv("AWS_RDS_DATABASE")
+        if username and password and host:
+            return {"username": username, "password": password, "host": host, "port": port, "database": database}
         return None
     
     def create_secret(self, secret_name: str, secret_value: str, description: str = "") -> bool:

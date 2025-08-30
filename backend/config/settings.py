@@ -2,6 +2,8 @@ import os
 import logging
 from typing import Optional
 
+from config.secrets import secrets_manager
+
 logger = logging.getLogger(__name__)
 
 class Settings:
@@ -28,7 +30,17 @@ class Settings:
         Production → postgresql://user:pass@aws-endpoint:5432/dbname
         """
         if self.is_production:
-            # Production: Use AWS RDS PostgreSQL
+            # Try Secrets Manager first for DB credentials
+            creds = secrets_manager.get_database_credentials()
+            if creds and creds.get("host") and creds.get("password"):
+                db_user = creds.get("username", "postgres")
+                db_password = creds.get("password")
+                db_host = creds.get("host")
+                db_name = creds.get("database", "ai_legal_assistant")
+                db_port = creds.get("port", "5432")
+                return f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+
+            # Fallback to environment variables if no secret present
             rds_endpoint = os.getenv('AWS_RDS_ENDPOINT')
             if rds_endpoint:
                 db_user = os.getenv('AWS_RDS_USERNAME', 'postgres')
@@ -46,49 +58,85 @@ class Settings:
     
     # REDIS SETTINGS
     @property
+    @property
     def redis_url(self) -> str:
         """
         Get Redis connection URL
-        
+
         FLOW:
         Development → redis://localhost:6379
-        Production → redis://elasticache-endpoint:6379
+        Production → redis://elasticache-endpoint:6379 (prefers Secrets Manager, then env)
         """
         if self.is_production:
-            # Production: Use AWS ElastiCache
+            elasticache_from_secret = secrets_manager.get_secret("elasticache_endpoint", "AWS_ELASTICACHE_ENDPOINT")
+            if elasticache_from_secret:
+                return f"redis://{elasticache_from_secret}:6379"
+
+            # Fallback to environment variable (CloudFormation / CI should set this)
             elasticache_endpoint = os.getenv('AWS_ELASTICACHE_ENDPOINT')
             if elasticache_endpoint:
                 return f"redis://{elasticache_endpoint}:6379"
-        
+
         # Development: Use local Redis
         return os.getenv('REDIS_URL', 'redis://localhost:6379')
+    
+    @property
+    def aws_region(self) -> str:
+        """AWS region to use for clients (default us-east-1)."""
+        return os.getenv('AWS_REGION', 'us-east-1')
+
+    @property
+    def aws_s3_bucket(self) -> Optional[str]:
+        """Primary S3 bucket name for legal documents (not secret by default)."""
+        # allow storing bucket name in secrets if desired
+        bucket_from_secret = secrets_manager.get_secret("aws_s3_bucket", None)
+        if bucket_from_secret:
+            return bucket_from_secret
+        return os.getenv('AWS_S3_BUCKET') or None
+    
+    @property
+    def aws_s3_prefix(self) -> str:
+        """Optional prefix/folder inside the S3 bucket for documents."""
+        return os.getenv('AWS_S3_PREFIX', '').lstrip('/')
+
+    @property
+    def chroma_persist_dir(self) -> str:
+        """Directory used by Chroma to persist vector store (local path inside container)."""
+        return os.getenv('CHROMA_PERSIST_DIR', './.chroma')
+
+    @property
+    def aws_access_key_id(self) -> Optional[str]:
+        # prefer Secrets Manager; fallback to env
+        return secrets_manager.get_secret("aws_access_key_id", "AWS_ACCESS_KEY_ID")
+
+    @property
+    def aws_secret_access_key(self) -> Optional[str]:
+        return secrets_manager.get_secret("aws_secret_access_key", "AWS_SECRET_ACCESS_KEY")
     
     # S3 SETTINGS
     @property
     def documents_bucket(self) -> Optional[str]:
         """
-        Get S3 bucket name for documents
-        
-        USAGE:
-        Production → ai-legal-assistant-documents-bucket
-        Development → None (use local files)
+        Legacy accessor - kept for compatibility.
+        Returns the same as aws_s3_bucket.
         """
-        if self.is_production:
-            return os.getenv('AWS_S3_BUCKET')
-        return None
+        return self.aws_s3_bucket
     
-    # API KEYS (same for both environments)
-    @property
+    property
     def openai_api_key(self) -> str:
-        return os.getenv('OPENAI_API_KEY', '')
-    
+        key = secrets_manager.get_openai_api_key()
+        if not key:
+            raise ValueError("OpenAI API key not configured")
+        return key
+
     @property
-    def langsmith_api_key(self) -> str:
-        return os.getenv('LANGSMITH_API_KEY', '')
-    
+    def langsmith_api_key(self) -> Optional[str]:
+        return secrets_manager.get_langsmith_api_key()
+
     @property
     def jwt_secret_key(self) -> str:
-        return os.getenv('JWT_SECRET_KEY', 'your-secret-key-change-in-production')
+        val = secrets_manager.get_secret("jwt_secret_key", "JWT_SECRET_KEY")
+        return val or os.getenv('JWT_SECRET_KEY', 'your-secret-key-change-in-production')
     
     # COST MONITORING
     @property

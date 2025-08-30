@@ -26,7 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 os.environ["OPENAI_API_KEY"] = settings.openai_api_key
-if settings.langsmith_api_key:
+if settings.langsmith_api_key and not os.getenv("LANGSMITH_API_KEY"):
     os.environ["LANGSMITH_API_KEY"] = settings.langsmith_api_key
     os.environ["LANGSMITH_TRACING"] = "true"
     os.environ["LANGSMITH_PROJECT"] = f"ai-legal-assistant-{settings.environment}"

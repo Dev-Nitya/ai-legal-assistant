@@ -31,8 +31,13 @@ class VectorStoreManager:
     
     def _load_vector_store(self):
         import os
-        
-        use_aws = os.getenv("USE_AWS_S3", "false").lower() == "true"
+        from config.settings import settings
+
+        use_aws = False
+        if settings and settings.documents_bucket:
+            use_aws = True
+        else:
+            use_aws = os.getenv("USE_AWS_S3", "false").lower() == "true"
         
         if use_aws:
             from chain.aws_loader import AWSDocumentsLoader
