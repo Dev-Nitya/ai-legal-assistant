@@ -5,39 +5,26 @@ Parameters:
   Environment:
     Type: String
     Default: production
-
   ClusterName:
     Type: String
     Description: Name of the ECS cluster
-
   ImageUri:
     Type: String
     Description: Docker image URI in ECR
-
-  AlbTargetGroupArn:
+  AlbTargetGroupArn:              # <-- required now
     Type: String
     Description: Target group ARN for load balancer
-    Default: ""   # 👈 optional
-
   AppSecurityGroupId:
     Type: String
     Description: Security group for ECS tasks
-
   Subnet1:
     Type: String
     Description: Subnet ID 1 for ECS tasks
-
   Subnet2:
     Type: String
     Description: Subnet ID 2 for ECS tasks
 
-Conditions:
-  HasAlbTargetGroup: !Not [!Equals [!Ref AlbTargetGroupArn, ""]]
-
 Resources:
-  ###############################################
-  # IAM Role for ECS Task Execution
-  ###############################################
   ECSTaskExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -52,9 +39,6 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
 
-  ###############################################
-  # ECS Task Definition
-  ###############################################
   AppTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -70,7 +54,7 @@ Resources:
           Image: !Ref ImageUri
           Essential: true
           PortMappings:
-            - ContainerPort: 3000
+            - ContainerPort: 8000        # <-- changed from 3000 to 8000
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -78,10 +62,7 @@ Resources:
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: ecs
 
-  ###############################################
-  # ECS Service
-  ###############################################
-    AppService:
+  AppService:
     Type: AWS::ECS::Service
     Properties:
       ServiceName: !Sub "${Environment}-app-service"
@@ -97,15 +78,10 @@ Resources:
           Subnets:
             - !Ref Subnet1
             - !Ref Subnet2
-      # 👇 Conditional Load Balancer
-      LoadBalancers: 
-        !If 
-          - HasAlbTargetGroup
-          - 
-            - ContainerName: app
-              ContainerPort: 3000
-              TargetGroupArn: !Ref AlbTargetGroupArn
-          - !Ref AWS::NoValue
+      LoadBalancers:                 # <-- always attach ALB/TG
+        - ContainerName: app
+          ContainerPort: 8000        # <-- matches above
+          TargetGroupArn: !Ref AlbTargetGroupArn
       DeploymentConfiguration:
         MaximumPercent: 200
         MinimumHealthyPercent: 50
@@ -114,11 +90,9 @@ Outputs:
   ServiceName:
     Description: Name of the ECS Service
     Value: !Ref AppService
-
   TaskDefinitionArn:
     Description: ARN of the ECS Task Definition
     Value: !Ref AppTaskDefinition
-
   ExecutionRoleArn:
     Description: ARN of the ECS Task Execution Role
     Value: !GetAtt ECSTaskExecutionRole.Arn

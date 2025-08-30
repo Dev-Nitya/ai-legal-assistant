@@ -59,23 +59,19 @@ jobs:
       - name: Get infra outputs
         id: infra_outputs
         run: |
+          set -e
+          # from stack outputs
           ECR_URI=$(aws cloudformation describe-stacks --stack-name $INFRA_STACK --query "Stacks[0].Outputs[?OutputKey=='EcrRepoUri'].OutputValue" --output text)
           ALB_DNS=$(aws cloudformation describe-stacks --stack-name $INFRA_STACK --query "Stacks[0].Outputs[?OutputKey=='AlbDNS'].OutputValue" --output text)
-          BUCKET=$(aws cloudformation describe-stacks --stack-name $INFRA_STACK --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" --output text)
-          DB_ENDPOINT=$(aws cloudformation describe-stacks --stack-name $INFRA_STACK --query "Stacks[0].Outputs[?OutputKey=='DatabaseEndpoint'].OutputValue" --output text)
-          REDIS_ENDPOINT=$(aws cloudformation describe-stacks --stack-name $INFRA_STACK --query "Stacks[0].Outputs[?OutputKey=='RedisEndpoint'].OutputValue" --output text)
 
-          # Derive additional info needed for service stack
-          APP_SG=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=ai-legal-assistant-app-sg-*" --query "SecurityGroups[0].GroupId" --output text || echo "")
-          TG_ARN=$(aws elbv2 describe-target-groups --names ai-legal-assistant-tg --query "TargetGroups[0].TargetGroupArn" --output text || echo "")
-          SUBNET1=$(aws ec2 describe-subnets --filters "Name=cidr-block,Values=10.0.3.0/24" --query "Subnets[0].SubnetId" --output text || echo "")
-          SUBNET2=$(aws ec2 describe-subnets --filters "Name=cidr-block,Values=10.0.4.0/24" --query "Subnets[0].SubnetId" --output text || echo "")
+          # from stack resources (physical IDs)
+          APP_SG=$(aws cloudformation describe-stack-resources --stack-name $INFRA_STACK --logical-resource-id AppSecurityGroup --query "StackResources[0].PhysicalResourceId" --output text)
+          TG_ARN=$(aws cloudformation describe-stack-resources --stack-name $INFRA_STACK --logical-resource-id AppTargetGroup --query "StackResources[0].PhysicalResourceId" --output text)
+          SUBNET1=$(aws cloudformation describe-stack-resources --stack-name $INFRA_STACK --logical-resource-id PrivateSubnet1 --query "StackResources[0].PhysicalResourceId" --output text)
+          SUBNET2=$(aws cloudformation describe-stack-resources --stack-name $INFRA_STACK --logical-resource-id PrivateSubnet2 --query "StackResources[0].PhysicalResourceId" --output text)
 
           echo "ecr_repo_uri=$ECR_URI" >> $GITHUB_OUTPUT
           echo "alb_dns=$ALB_DNS" >> $GITHUB_OUTPUT
-          echo "bucket=$BUCKET" >> $GITHUB_OUTPUT
-          echo "db_endpoint=$DB_ENDPOINT" >> $GITHUB_OUTPUT
-          echo "redis_endpoint=$REDIS_ENDPOINT" >> $GITHUB_OUTPUT
           echo "app_sg=$APP_SG" >> $GITHUB_OUTPUT
           echo "tg_arn=$TG_ARN" >> $GITHUB_OUTPUT
           echo "subnet1=$SUBNET1" >> $GITHUB_OUTPUT
@@ -150,26 +146,23 @@ jobs:
           REPO_IMAGE="${{ needs.build-and-push.outputs.image-uri }}"
           echo "Deploying service stack with image: $REPO_IMAGE"
 
-          PARAMS="Environment=production \
-                  ClusterName=ai-legal-assistant-cluster \
-                  ImageUri=$REPO_IMAGE \
-                  AppSecurityGroupId=${{ needs.prepare.outputs.app_sg }} \
-                  Subnet1=${{ needs.prepare.outputs.subnet1 }} \
-                  Subnet2=${{ needs.prepare.outputs.subnet2 }}"
-
-          # Add ALB Target Group ARN only if present
-          if [ -n "${{ needs.prepare.outputs.tg_arn }}" ] && [ "${{ needs.prepare.outputs.tg_arn }}" != "None" ]; then
-            echo "Target Group ARN found: ${{ needs.prepare.outputs.tg_arn }}"
-            PARAMS="$PARAMS AlbTargetGroupArn=${{ needs.prepare.outputs.tg_arn }}"
-          else
-            echo "No Target Group ARN provided. Deploying without ALB..."
+          # hard fail if TG missing
+          if [ -z "${{ needs.prepare.outputs.tg_arn }}" ] || [ "${{ needs.prepare.outputs.tg_arn }}" = "None" ]; then
+            echo "ERROR: AlbTargetGroupArn not found from infra stack (AppTargetGroup)."; exit 1
           fi
 
           aws cloudformation deploy \
             --stack-name ${{ env.SERVICE_STACK }} \
             --template-file infrastructure/service-stack.yml \
             --capabilities CAPABILITY_NAMED_IAM \
-            --parameter-overrides $PARAMS \
+            --parameter-overrides \
+              Environment=production \
+              ClusterName=ai-legal-assistant-cluster \
+              ImageUri=$REPO_IMAGE \
+              AlbTargetGroupArn=${{ needs.prepare.outputs.tg_arn }} \
+              AppSecurityGroupId=${{ needs.prepare.outputs.app_sg }} \
+              Subnet1=${{ needs.prepare.outputs.subnet1 }} \
+              Subnet2=${{ needs.prepare.outputs.subnet2 }} \
             --region ${{ env.AWS_REGION }}
 
       - name: Force ECS deployment (safety)
