@@ -83,7 +83,6 @@ class SecretsManager:
         logger.error(f"❌ No secret found for {secret_name}")
         return None
 
-
     def get_openai_api_key(self) -> str:
         """Get OpenAI API key with fallback"""
         api_key = self.get_secret("openai_api_key", "OPENAI_API_KEY")

@@ -2,6 +2,15 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Keep Python logs unbuffered for CloudWatch
+ENV PYTHONUNBUFFERED=1
+
+# Disable chroma telemetry (avoids posthog capture signature errors)
+ENV CHROMA_TELEMETRY=false
+# Local defaults (can be overridden by ECS task definition)
+ENV CHROMA_PERSIST_DIR=/app/chroma_db
+ENV DOCUMENTS_DIR=/app/docs
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \

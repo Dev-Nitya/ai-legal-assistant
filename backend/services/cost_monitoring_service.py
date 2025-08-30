@@ -9,23 +9,20 @@ Key Features:
 - Budget enforcement with automatic cutoffs
 - Cost analytics and reporting
 - Alert system for budget thresholds
-- Integration with Redis for fast lookups
 
 Integration Points:
 - Uses token_calculator.py for accurate cost estimation
 - Integrates with cost_limits.py for budget configuration
-- Stores data in Redis for fast access
 - Provides middleware integration points
 """
 
 import json
 import logging
 from time import time
-from typing import Dict, List, Optional, Tuple, Any
-from datetime import datetime, timedelta
+from typing import Dict, Optional, Any
+from datetime import datetime
 from dataclasses import dataclass, asdict
 from enum import Enum
-import redis
 
 from config.database import get_db
 from models.user import UserBudget
@@ -135,32 +132,7 @@ class CostMonitoringService:
     """
 
     def __init__(self):
-         # Connect to Redis (our "database" for fast budget lookups)
-        self.redis_client = self._connect_to_redis()
-
-    def _connect_to_redis(self):
-        try:
-            # Try to connect to Redis server
-            redis_client = redis.Redis(
-                host=settings.redis_host,      # Redis server location
-                port=settings.redis_port,            # Standard Redis port
-                db=0,                 # Redis database number (0 is default)
-                decode_responses=True, # Convert bytes to strings automatically
-                socket_timeout=5,     # Don't wait forever for connection
-                socket_connect_timeout=5
-            )
-            
-            # Test the connection
-            redis_client.ping()
-            logger.info("✅ Connected to Redis for cost monitoring")
-            return redis_client
-        except (redis.ConnectionError, redis.TimeoutError) as e:
-            logger.warning(f"⚠️  Redis not available: {e}")
-            logger.warning("📝 Using in-memory storage (development mode)")
-     
-        except Exception as e:
-            logger.error(f"❌ Unexpected Redis error: {e}")
-            logger.warning("📝 Falling back to in-memory storage")
+        logger.info('💰 Initializing CostMonitoringService')
      
     def can_user_afford_this_request(self, user_id, estimated_cost, user_tier):
         """
@@ -326,6 +298,5 @@ class CostMonitoringService:
         }
 
         alert_key = f"alert:{user_id}:{int(time.time())}"
-        self.redis_client.setex(alert_key, 24 * 3600, json.dumps(alert_data))  # Keep for 24 hours
 
 cost_monitoring_service = CostMonitoringService()

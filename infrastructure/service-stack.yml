@@ -110,6 +110,13 @@ Resources:
               awslogs-group: !Ref AppLogGroup
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: ecs
+          Environment:                           
+            - Name: CHROMA_TELEMETRY
+              Value: "false"
+            - Name: CHROMA_PERSIST_DIR
+              Value: "/app/chroma_db"
+            - Name: DOCUMENTS_DIR
+              Value: "/app/docs"
 
   AppService:
     Type: AWS::ECS::Service
