@@ -41,23 +41,31 @@ class AWSDocumentsLoader:
             if not self.s3_bucket:
                 print("Error: AWS_S3_BUCKET environment variable is not set.")
                 return []
-            
-            response = self.s3_client.list_objects_v2(
-                Bucket=self.s3_bucket,
-                Prefix=self.s3_prefix,
-            )
 
             pdf_objects = []
-            if 'Contents' in response:
-                for obj in response['Contents']:
-                    if obj['Key'].lower().endswith('.pdf'):
+            paginator = self.s3_client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=self.s3_bucket, Prefix=self.s3_prefix):
+                contents = page.get("Contents", [])
+                for obj in contents:
+                    try:
+                        key = obj.get("Key")
+                        if not key or not key.lower().endswith(".pdf"):
+                            continue
+
+                        etag = obj.get("ETag") or obj.get("Etag") or ""
+                        etag = etag.strip('"') if isinstance(etag, str) else ""
+
                         pdf_objects.append({
-                            'key': obj['Key'],
-                            'size': obj['Size'],
-                            'last_modified': obj['LastModified'].isoformat(),
-                            'etag': obj['Etag'].strip('"')
+                            "key": key,
+                            "size": obj.get("Size", 0),
+                            "last_modified": obj.get("LastModified").isoformat() if obj.get("LastModified") else None,
+                            "etag": etag
                         })
-            
+                    except Exception as e:
+                        # Skip problematic object but continue listing others
+                        print(f"Warning: skipping S3 object due to unexpected data: {e}")
+                        continue
+
             print(f"Found {len(pdf_objects)} PDF documents in S3")
             return pdf_objects
         except ClientError as e:

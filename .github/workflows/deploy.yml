@@ -200,6 +200,7 @@ jobs:
           # from stack outputs
           ECR_URI=$(aws cloudformation describe-stacks --stack-name $INFRA_STACK --query "Stacks[0].Outputs[?OutputKey=='EcrRepoUri'].OutputValue" --output text)
           ALB_DNS=$(aws cloudformation describe-stacks --stack-name $INFRA_STACK --query "Stacks[0].Outputs[?OutputKey=='AlbDNS'].OutputValue" --output text)
+          REDIS_ENDPOINT=$(aws cloudformation describe-stacks --stack-name $INFRA_STACK --query "Stacks[0].Outputs[?OutputKey=='RedisEndpoint'].OutputValue" --output text)
 
           # from stack resources (physical IDs)
           APP_SG=$(aws cloudformation describe-stack-resources --stack-name $INFRA_STACK --logical-resource-id AppSecurityGroup --query "StackResources[0].PhysicalResourceId" --output text)
@@ -209,10 +210,30 @@ jobs:
 
           echo "ecr_repo_uri=$ECR_URI" >> $GITHUB_OUTPUT
           echo "alb_dns=$ALB_DNS" >> $GITHUB_OUTPUT
+          echo "redis_endpoint=$REDIS_ENDPOINT" >> $GITHUB_OUTPUT
           echo "app_sg=$APP_SG" >> $GITHUB_OUTPUT
           echo "tg_arn=$TG_ARN" >> $GITHUB_OUTPUT
           echo "subnet1=$SUBNET1" >> $GITHUB_OUTPUT
           echo "subnet2=$SUBNET2" >> $GITHUB_OUTPUT
+
+      - name: Persist infra-generated secrets to AWS Secrets Manager
+        if: ${{ steps.infra_outputs.outputs.redis_endpoint != '' && steps.infra_outputs.outputs.redis_endpoint != 'None' }}
+        run: |
+          set -euo pipefail
+          ENV=production
+          PREFIX=ai-legal-assistant
+          REDIS_ENDPOINT="${{ steps.infra_outputs.outputs.redis_endpoint }}"
+          SECRET_NAME="${PREFIX}-elasticache_endpoint-${ENV}"
+
+          echo "Writing Redis endpoint to Secrets Manager as: $SECRET_NAME"
+
+          if aws secretsmanager describe-secret --secret-id "$SECRET_NAME" >/dev/null 2>&1; then
+            echo "Updating secret: $SECRET_NAME"
+            aws secretsmanager put-secret-value --secret-id "$SECRET_NAME" --secret-string "$REDIS_ENDPOINT" >/dev/null
+          else
+            echo "Creating secret: $SECRET_NAME"
+            aws secretsmanager create-secret --name "$SECRET_NAME" --secret-string "$REDIS_ENDPOINT" --description "Managed by GitHub Actions for ${PREFIX}" >/dev/null
+          fi
 
   build-and-push:
     needs: prepare
