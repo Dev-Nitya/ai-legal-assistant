@@ -60,12 +60,35 @@ const UserDashboard: React.FC = () => {
     }
   };
 
-  const formatCurrency = (amount: number) => {
+  const formatCurrency = (amount: number, digits: number = 2) => {
+    if (amount == null || Number.isNaN(amount)) return "—";
+
+    const maxDigits = 8;
+    let currentDigits = Math.max(0, digits);
+
+    for (; currentDigits <= maxDigits; currentDigits++) {
+      const mul = Math.pow(10, currentDigits);
+      const truncated = Math.trunc(amount * mul) / mul;
+
+      // If truncated is non-zero (or we've reached max precision) format and return
+      if (truncated !== 0 || currentDigits === maxDigits) {
+        return new Intl.NumberFormat("en-US", {
+          style: "currency",
+          currency: "USD",
+          minimumFractionDigits: currentDigits,
+          maximumFractionDigits: currentDigits,
+        }).format(truncated);
+      }
+      // otherwise increment digits and try again
+    }
+
+    // fallback (shouldn't reach)
     return new Intl.NumberFormat("en-US", {
       style: "currency",
       currency: "USD",
-      minimumFractionDigits: 2,
-    }).format(amount);
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    }).format(0);
   };
 
   const calculateUsagePercentage = (used: number, limit: number) => {
@@ -207,12 +230,12 @@ const UserDashboard: React.FC = () => {
                     />
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
-                    Spent: {formatCurrency(user.budget_info.usage.daily_spent)}{" "}
-                    (
+                    Spent:{" "}
+                    {formatCurrency(user.budget_info.usage.daily_spent, 4)} (
                     {calculateUsagePercentage(
                       user.budget_info.usage.daily_spent,
                       user.budget_info.limits.daily_limit
-                    ).toFixed(1)}
+                    ).toFixed(3)}
                     %)
                   </p>
                 </div>
@@ -261,64 +284,11 @@ const UserDashboard: React.FC = () => {
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
                     Spent:{" "}
-                    {formatCurrency(user.budget_info.usage.monthly_spent)} (
+                    {formatCurrency(user.budget_info.usage.monthly_spent, 4)} (
                     {calculateUsagePercentage(
                       user.budget_info.usage.monthly_spent,
                       user.budget_info.limits.monthly_limit
-                    ).toFixed(1)}
-                    %)
-                  </p>
-                </div>
-
-                {/* Hourly Budget */}
-                <div className="bg-gray-50 p-4 rounded-xl">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-gray-700 font-medium">
-                      Hourly Budget
-                    </span>
-                    <span className="text-gray-600 text-sm">
-                      {formatCurrency(
-                        Math.max(
-                          0,
-                          user.budget_info.limits.hourly_limit -
-                            user.budget_info.usage.hourly_spent
-                        )
-                      )}{" "}
-                      / {formatCurrency(user.budget_info.limits.hourly_limit)}
-                    </span>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <motion.div
-                      className={`h-2 rounded-full ${
-                        calculateUsagePercentage(
-                          user.budget_info.usage.hourly_spent,
-                          user.budget_info.limits.hourly_limit
-                        ) > 80
-                          ? "bg-gradient-to-r from-red-400 to-red-600"
-                          : calculateUsagePercentage(
-                              user.budget_info.usage.hourly_spent,
-                              user.budget_info.limits.hourly_limit
-                            ) > 60
-                          ? "bg-gradient-to-r from-yellow-400 to-yellow-600"
-                          : "bg-gradient-to-r from-purple-400 to-purple-600"
-                      }`}
-                      initial={{ width: 0 }}
-                      animate={{
-                        width: `${calculateUsagePercentage(
-                          user.budget_info.usage.hourly_spent,
-                          user.budget_info.limits.hourly_limit
-                        )}%`,
-                      }}
-                      transition={{ duration: 1, delay: 0.4, ease: "easeOut" }}
-                    />
-                  </div>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Spent: {formatCurrency(user.budget_info.usage.hourly_spent)}{" "}
-                    (
-                    {calculateUsagePercentage(
-                      user.budget_info.usage.hourly_spent,
-                      user.budget_info.limits.hourly_limit
-                    ).toFixed(1)}
+                    ).toFixed(3)}
                     %)
                   </p>
                 </div>
@@ -327,12 +297,6 @@ const UserDashboard: React.FC = () => {
               user.budget_limits && (
                 <div className="bg-gray-50 p-4 rounded-xl">
                   <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="text-gray-600">Hourly Limit:</span>
-                      <p className="font-semibold text-gray-800">
-                        {formatCurrency(user.budget_limits.hourly || 0)}
-                      </p>
-                    </div>
                     <div>
                       <span className="text-gray-600">Daily Limit:</span>
                       <p className="font-semibold text-gray-800">
@@ -367,22 +331,6 @@ const UserDashboard: React.FC = () => {
             className="mt-6 pt-6 border-t border-gray-200"
           >
             <div className="space-y-3">
-              <motion.button
-                className="w-full flex items-center space-x-3 p-3 text-gray-700 hover:bg-gray-50 rounded-xl transition-colors duration-200"
-                whileHover={{ x: 5 }}
-              >
-                <TrendingUp className="h-5 w-5 text-blue-500" />
-                <span>Usage Analytics</span>
-              </motion.button>
-
-              <motion.button
-                className="w-full flex items-center space-x-3 p-3 text-gray-700 hover:bg-gray-50 rounded-xl transition-colors duration-200"
-                whileHover={{ x: 5 }}
-              >
-                <Settings className="h-5 w-5 text-gray-500" />
-                <span>Account Settings</span>
-              </motion.button>
-
               <motion.button
                 onClick={logout}
                 className="w-full flex items-center space-x-3 p-3 text-red-600 hover:bg-red-50 rounded-xl transition-colors duration-200"

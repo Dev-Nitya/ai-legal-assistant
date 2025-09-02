@@ -383,14 +383,6 @@ const EvaluationInterface: React.FC<EvaluationInterfaceProps> = ({
             <h3 className="text-xl font-semibold text-gray-800">
               Evaluation Results
             </h3>
-            <motion.button
-              className="flex items-center space-x-2 px-4 py-2 text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded-lg transition-colors duration-200"
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-            >
-              <Download className="h-4 w-4" />
-              <span>Export</span>
-            </motion.button>
           </div>
 
           {/* Single Evaluation Results */}

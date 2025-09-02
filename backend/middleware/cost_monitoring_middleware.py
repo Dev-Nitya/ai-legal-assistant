@@ -17,6 +17,7 @@ import json
 import time
 import logging
 from typing import Optional, Dict, Any, Tuple
+import uuid
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -24,6 +25,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from services.auth_service import auth_service
 from services.cost_monitoring_service import cost_monitoring_service
 from utils.token_calculator import count_tokens, token_calculator
+from redis_cache.redis_cache import cache
+from config.cost_limits import COST_DATA_TTL
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +99,14 @@ class CostMonitoringMiddleware(BaseHTTPMiddleware):
             # Step 3: How much will this request cost?
             estimated_cost, request_body = await self._estimate_request_cost_and_preserve_body(request)
             
+            request_id = str(uuid.uuid4())
+            try:
+                ttl_seconds = int(COST_DATA_TTL.get("hourly_usage").total_seconds())
+                payload = estimated_cost or {}
+                cache.set(f"cost_est:{request_id}", json.dumps(payload), ttl_seconds)
+            except Exception as e:
+                logger.info("Failed to persist cost estimate to cache: %s", e)
+
             # Step 4: Can this user afford this request?
             can_afford, reason = cost_monitoring_service.can_user_afford_this_request(
                 user_id=user_id, 
@@ -110,9 +121,9 @@ class CostMonitoringMiddleware(BaseHTTPMiddleware):
             
             # Recreate the request with the preserved body
             if request_body is not None:
-                request = await self._recreate_request_with_body(request, request_body)
+                updated_request = await self._recreate_request_with_body(request, request_body, request_id)
             
-            response = await call_next(request)
+            response = await call_next(updated_request)
 
             self._add_cost_info_to_response(response, estimated_cost)
 
@@ -255,7 +266,7 @@ class CostMonitoringMiddleware(BaseHTTPMiddleware):
             except:
                 return None, None
 
-    async def _recreate_request_with_body(self, original_request: Request, body_bytes: bytes) -> Request:
+    async def _recreate_request_with_body(self, original_request: Request, body_bytes: bytes, request_id: str = None) -> Request:
         """
         Recreate the request with the preserved body so the route handler can read it.
         
@@ -267,25 +278,45 @@ class CostMonitoringMiddleware(BaseHTTPMiddleware):
             New request with the body available for reading
         """
         from fastapi import Request
-        from starlette.datastructures import Headers
         import io
-        
+        import json
+
+        new_body_bytes = body_bytes
+        if request_id:
+            try:
+                parsed = json.loads(body_bytes)
+                # only inject if not present already
+                if isinstance(parsed, dict) and not parsed.get("request_id"):
+                    parsed["request_id"] = request_id
+                    new_body_bytes = json.dumps(parsed).encode()
+            except Exception:
+                # not JSON or failed to parse — leave body as-is
+                new_body_bytes = body_bytes
+
         # Create a new scope with the body
         scope = original_request.scope.copy()
+
+        headers = list(scope.get("headers", []))
+        if request_id:
+            headers = [h for h in headers if h[0].lower() != b"x-request-id"]  # remove existing if any
+            headers.append((b"x-request-id", request_id.encode()))
+        scope["headers"] = headers
         
         # Create a readable stream from the preserved body
-        body_stream = io.BytesIO(body_bytes)
+        body_stream = io.BytesIO(new_body_bytes)
         
         # Create a new receive callable that provides the body
         async def receive():
             return {
                 "type": "http.request",
-                "body": body_bytes,
+                "body": new_body_bytes,
                 "more_body": False
             }
         
         # Create new request with the body
         new_request = Request(scope, receive)
+        new_request.state.request_id = request_id
+
         return new_request
 
     async def _estimate_request_cost(self, request: Request) -> Optional[Dict[str, Any]]:

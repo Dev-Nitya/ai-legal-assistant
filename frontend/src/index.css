@@ -15,11 +15,12 @@
   /* Enhanced Scrollbar */
   .scrollbar-elegant {
     scrollbar-width: thin;
-    scrollbar-color: #cbd5e1 #f1f5f9;
+    scrollbar-color: #94a3b8 #f1f5f9;
   }
   
   .scrollbar-elegant::-webkit-scrollbar {
-    width: 6px;
+    width: 8px;
+    height: 8px;
   }
   
   .scrollbar-elegant::-webkit-scrollbar-track {
@@ -28,13 +29,21 @@
   }
   
   .scrollbar-elegant::-webkit-scrollbar-thumb {
-    background: linear-gradient(180deg, #cbd5e1, #94a3b8);
+    background: #94a3b8;
     border-radius: 10px;
-    transition: all 0.3s ease;
+    cursor: pointer;
   }
   
   .scrollbar-elegant::-webkit-scrollbar-thumb:hover {
-    background: linear-gradient(180deg, #94a3b8, #64748b);
+    background: #64748b;
+  }
+
+  .scrollbar-elegant::-webkit-scrollbar-thumb:active {
+    background: #475569;
+  }
+  
+  .scrollbar-elegant::-webkit-scrollbar-corner {
+    background: #f1f5f9;
   }
 }
 

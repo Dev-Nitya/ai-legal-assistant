@@ -45,7 +45,7 @@ class UserProfileResponse(BaseModel):
     created_at: str
     budget_info: dict           
 
-@router.post("/register", response_model=AuthResponse)
+@router.post("/auth/register", response_model=AuthResponse)
 async def register_user(
     request: UserRegistrationRequest,
     db: Session = Depends(get_db)

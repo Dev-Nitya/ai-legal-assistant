@@ -15,8 +15,9 @@ from config.settings import settings
 from config.secrets import secrets_manager
 
 # Configuration
-DOCUMENTS_DIR = os.getenv("DOCUMENTS_DIR", "/app/documents")
-CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "/app/chroma_db")
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+DOCUMENTS_DIR = os.getenv("DOCUMENTS_DIR", str(BACKEND_ROOT / "documents"))
+CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", str(BACKEND_ROOT / "chroma_db"))
 CACHE_FILE = os.path.join(CHROMA_PERSIST_DIR, "document_cache.json")
 
 def resolve_openai_key():
@@ -135,16 +136,17 @@ def save_cache_metadata(metadata: dict):
     """Save cache metadata"""
     os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
     try:
+        json_to_save = {
+            "doc_hash": metadata.get("doc_hash") or metadata.get("document_hash") or "",
+            "document_count": metadata.get("document_count", 0),
+            "created_at": metadata.get("created_at")
+        }
         with open(CACHE_FILE, "w") as f:
-            json.dump(metadata, f)
+           json.dump(json_to_save, f)
     except Exception as e:
         print(f"Error saving cache metadata: {e}")
 
-def is_cache_valid() -> bool:
-    """Check if the cached vector store is still valid"""
-    if not os.path.exists(CHROMA_PERSIST_DIR):
-        return False
-    
+def is_cache_valid() -> bool:    
     current_hash = get_document_hash()
     cache_metadata = load_cache_metadata()
 
@@ -213,6 +215,7 @@ def get_or_create_vector_store():
     # Check if we can load from cache
     if is_cache_valid():
         try:
+            print("Cache is valid, loading vector store from cache...")
             openai_key = resolve_openai_key()
             if not openai_key:
                 raise RuntimeError(

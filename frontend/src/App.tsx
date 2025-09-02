@@ -22,7 +22,7 @@ import EvaluationInterface from "./components/EvaluationInterface";
 import { useEnhancedChatWithBudget } from "./hooks/useEnhancedChatWithBudget";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { ToastProvider } from "./components/Toast";
-import type { Message, ComplexityLevel, DocumentFilters } from "./types";
+import type { Message, ComplexityLevel } from "./types";
 
 // Separate MainApp component to use auth context
 const MainApp: React.FC = () => {
@@ -39,14 +39,10 @@ const MainApp: React.FC = () => {
   // Chat settings
   const [chatSettings, setChatSettings] = useState({
     complexity: "simple" as ComplexityLevel,
-    useTools: true,
-    useHybridSearch: true,
-    includeCitations: true,
-    maxSources: 5,
-    filters: {} as DocumentFilters,
   });
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   // Use enhanced chat with automatic budget refresh
   const { sendMessage, isLoading, error } = useEnhancedChatWithBudget({
@@ -67,7 +63,10 @@ const MainApp: React.FC = () => {
   });
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const container = messagesContainerRef.current;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
   };
 
   useEffect(() => {
@@ -87,18 +86,16 @@ const MainApp: React.FC = () => {
 
     setMessages((prev) => [...prev, userMessage]);
 
-    // Create enhanced chat request
+    // Create enhanced chat request - normalize frontend settings to backend keys
     const request = {
       user_id: user?.user_id || "anonymous",
       question: inputValue,
-      complexity_level: chatSettings.complexity,
-      use_tools: chatSettings.useTools,
-      use_hybrid_search: chatSettings.useHybridSearch,
-      include_citations: chatSettings.includeCitations,
-      max_sources: chatSettings.maxSources,
-      filters: chatSettings.filters,
-      bypass_cache: false,
-    };
+      // accept either chatSettings.complexity or chatSettings.complexity_level
+      complexity_level:
+        (chatSettings as any).complexity_level ??
+        (chatSettings as any).complexity ??
+        "simple",
+    } as any;
 
     setInputValue("");
 
@@ -118,11 +115,6 @@ const MainApp: React.FC = () => {
   const resetChatSettings = () => {
     setChatSettings({
       complexity: "simple",
-      useTools: true,
-      useHybridSearch: true,
-      includeCitations: true,
-      maxSources: 5,
-      filters: {},
     });
   };
 
@@ -299,18 +291,32 @@ const MainApp: React.FC = () => {
       {/* Main Content Area */}
       <div className="flex-1 flex overflow-hidden max-w-7xl mx-auto w-full px-8 py-6 space-x-6">
         {/* Main Content */}
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 flex flex-col min-h-0">
           {activeView === "chat" && (
-            <div className="flex-1 flex flex-col card-premium overflow-hidden">
+            <div
+              className="flex-1 flex flex-col card-premium overflow-hidden min-h-0"
+              style={{ position: "relative" }}
+            >
               {/* Messages Container */}
-              <div className="flex-1 overflow-y-auto scrollbar-elegant p-8 space-y-6">
+              <div
+                ref={messagesContainerRef}
+                className="flex-1 overflow-y-auto scrollbar-elegant p-8 space-y-6 min-h-0"
+                style={{
+                  maxHeight: "60vh",
+                  minHeight: "400px",
+                  overflowY: "auto",
+                  pointerEvents: "auto",
+                  position: "relative",
+                }}
+              >
                 <AnimatePresence>
                   {messages.length === 0 ? (
                     <motion.div
                       initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -20 }}
-                      className="flex flex-col items-center justify-center h-full text-center py-20"
+                      className="flex flex-col items-center justify-center text-center py-20"
+                      style={{ minHeight: "70vh" }}
                     >
                       <motion.div
                         className="relative mb-8"
@@ -486,28 +492,8 @@ const MainApp: React.FC = () => {
           {activeView === "settings" && (
             <AdvancedChatSettings
               complexity={chatSettings.complexity}
-              useTools={chatSettings.useTools}
-              useHybridSearch={chatSettings.useHybridSearch}
-              includeCitations={chatSettings.includeCitations}
-              maxSources={chatSettings.maxSources}
-              filters={chatSettings.filters}
               onComplexityChange={(complexity) =>
                 setChatSettings((prev) => ({ ...prev, complexity }))
-              }
-              onUseToolsChange={(useTools) =>
-                setChatSettings((prev) => ({ ...prev, useTools }))
-              }
-              onUseHybridSearchChange={(useHybridSearch) =>
-                setChatSettings((prev) => ({ ...prev, useHybridSearch }))
-              }
-              onIncludeCitationsChange={(includeCitations) =>
-                setChatSettings((prev) => ({ ...prev, includeCitations }))
-              }
-              onMaxSourcesChange={(maxSources) =>
-                setChatSettings((prev) => ({ ...prev, maxSources }))
-              }
-              onFiltersChange={(filters) =>
-                setChatSettings((prev) => ({ ...prev, filters }))
               }
               onReset={resetChatSettings}
             />

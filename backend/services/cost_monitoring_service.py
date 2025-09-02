@@ -177,7 +177,7 @@ class CostMonitoringService:
             return True, "Budget check passed"
             
         except Exception as e:
-            logger.error(f"Budget check error for user {user_id}: {e}")
+            logger.info(f"Budget check error for user {user_id}: {e}")
             return False, "Budget check failed"
 
     def record_money_spent(self, user_id, actual_cost):
@@ -202,6 +202,7 @@ class CostMonitoringService:
             
             # Find user's budget record
             user_budget = db.query(UserBudget).filter(UserBudget.user_id == user_id).first()
+            logger.info('💰 Recording cost for user %s: $%.4f', user_id, actual_cost)
             
             if not user_budget:
                 logger.warning(f"No budget record found for user {user_id} when recording ${actual_cost:.4f}")

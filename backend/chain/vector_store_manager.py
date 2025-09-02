@@ -34,7 +34,7 @@ class VectorStoreManager:
         from config.settings import settings
 
         use_aws = False
-        if settings and settings.documents_bucket:
+        if settings and settings.is_production and settings.documents_bucket:
             use_aws = True
         else:
             use_aws = os.getenv("USE_AWS_S3", "false").lower() == "true"

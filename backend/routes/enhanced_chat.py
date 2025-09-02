@@ -29,7 +29,8 @@ ENHANCED_LEGAL_PROMPT = """You are an expert AI Legal Assistant specializing in 
 2. Use available tools when additional research is needed
 3. Adjust explanation complexity: {complexity_level}
 4. Always include proper citations and sources
-5. State confidence level and limitations clearly
+5. State confidence level 
+6. State limitations clearly
 
 Query Analysis: {query_analysis}
 
@@ -43,7 +44,8 @@ Guidelines:
 - Include specific section/case references
 - Recommend human legal consultation for complex matters
 
-IMPORTANT: Format your response in HTML with the following structure:
+IMPORTANT: Format your response in HTML with the following structure (Follow all these rules, these are not to be missed)
+- Dont include 'html', 'body' or other top-level tags
 - Use <h3> for main headings
 - Use <h4> for sub-headings
 - Use <p> for paragraphs
@@ -52,47 +54,56 @@ IMPORTANT: Format your response in HTML with the following structure:
 - Use <em> for emphasis
 - Use <blockquote> for quotes from legal documents
 - Use <br> for line breaks where needed
-- Include citations as <cite>Source Name, Section X</cite>
+- Include citations 'Cite - Source Name, Section X' and highlight the same in italics
+- Make sure the headings are bold
+- Make sure no words in a paragraph are bold
+- To highlight any word in a paragraph, use color with hex code #d97706
 
 Answer the user's question comprehensively using the above context in HTML format.
 """
 
 @router.post("/enhanced-chat", response_model=EnhancedChatResponse)
 async def enhanced_chat(
-    request: EnhancedChatRequest,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)):
+    payload: EnhancedChatRequest,
+    db: Session = Depends(get_db),
+    http_request: Request = None):
     start_time = time.time()
 
     try:
+        request_id = None
+        try:
+            request_id = payload.request_id or http_request.headers.get("x-request-id")
+        except Exception:
+            pass
+
         # Step 1: Check cache first
-        cache_key = f"{request.question}_{request.complexity_level}_{str(request.filters)}"
+        cache_key = f"{payload.question}_{payload.complexity_level}"
         cached_response = cache.get_cached_query(cache_key)
 
         if cached_response:
-            logger.info(f"Cache hit for query: {request.question}")
+            logger.info(f"Cache hit for query: {payload.question}")
             cached_response["response_time_ms"] = int((time.time() - start_time) * 1000)
             cached_response["from_cache"] = True
             return EnhancedChatResponse(**cached_response)
 
         # Step 2: Process and analyze query
-        query_analysis = query_processor.preprocess_query(request.question)
+        query_analysis = query_processor.preprocess_query(payload.question)
         print(f"Query Analysis: {query_analysis}")
 
 
         # Step 4: Enhanced retrieval
-        if request.use_hybrid_search and enhanced_retriever:
+        if enhanced_retriever:
             # Use hybrid retriever with filters
-            filters = request.filters or query_analysis.get('filters', {})
+            filters = query_analysis.get('filters', {})
             relevant_docs = enhanced_retriever.retrieve_with_filters(
-                query=request.question,
+                query=payload.question,
                 filters=filters,
                 k=5
         )
         else:
             # Fallback to basic retrieval
             retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-            relevant_docs = retriever.get_relevant_documents(request.question)
+            relevant_docs = retriever.get_relevant_documents(payload.question)
 
         # Step 5: Calculate confidence based on retrieval quality
         confidence = calculate_confidence(relevant_docs, query_analysis)
@@ -100,10 +111,17 @@ async def enhanced_chat(
         # Step 6: Prepare context for LLM
         context = format_context(relevant_docs)
 
-        # Step 7: Use LLM to generate answer
-        llm = ChatOpenAI(temperature=0, model="gpt-4o-mini", openai_api_key=settings.openai_api_key)
+        cost_callback = CostTrackingCallback(user_id=payload.user_id, request_id=request_id)
 
-        if request.use_tools and confidence < 0.7:
+        # Step 7: Use LLM to generate answer
+        llm = ChatOpenAI(
+            temperature=0, 
+            model="gpt-4o-mini", 
+            openai_api_key=settings.openai_api_key,
+            callbacks=[cost_callback],
+            )
+
+        if confidence < 0.7:
             print(f"Confidence low ({confidence:.2f}), using tools.")
             # Use tools when confidence is low
             prompt = ChatPromptTemplate.from_messages([
@@ -116,8 +134,6 @@ async def enhanced_chat(
                 tools=ALL_TOOLS,
                 prompt=prompt,
             )
-
-            cost_callback = CostTrackingCallback(user_id=request.user_id)
      
             agent_executor = AgentExecutor(
                 agent=agent,
@@ -126,10 +142,10 @@ async def enhanced_chat(
                 callbacks=[cost_callback]
             )
             result = agent_executor.invoke({
-                "input": request.question,
+                "input": payload.question,
                 "query_analysis": str(query_analysis),
                 "context": context,
-                "complexity_level": request.complexity_level
+                "complexity_level": payload.complexity_level
             })
             answer = result['output']
             tools_used = [tool.name for tool in ALL_TOOLS]
@@ -137,7 +153,7 @@ async def enhanced_chat(
             print(f"Confidence high ({confidence:.2f}), skipping tools.")
             # Use direct LLM with context
             prompt = ENHANCED_LEGAL_PROMPT.format(
-                complexity_level=request.complexity_level,
+                complexity_level=payload.complexity_level,
                 query_analysis=query_analysis,
                 context=context
             )
@@ -148,7 +164,7 @@ async def enhanced_chat(
                 },
                 {
                     "role": "user",
-                    "content": request.question
+                    "content": payload.question
                 }
             ])
             answer = response.content
@@ -183,14 +199,13 @@ async def enhanced_chat(
             "confidence": confidence,
             "tools_used": tools_used,
             "citations": citations,
-            "reading_level": request.complexity_level,
+            "reading_level": payload.complexity_level,
             "response_time_ms": response_time,
             "query_analysis": query_analysis,
             "retrieval_stats": {
                 "documents_retrieved": len(relevant_docs),
                 "unique_sources": len(set(doc.metadata.get('source_file') for doc in relevant_docs)),
-                "average_relevance": confidence,
-                "hybrid_search_used": request.use_hybrid_search and enhanced_retriever is not None
+                "average_relevance": confidence
             },
             "from_cache": False
         }
@@ -219,9 +234,9 @@ async def enhanced_chat(
             }
         )
     
-async def validation_exception_handler(request: Request, exc):
+async def validation_exception_handler(payload: Request, exc):
     """Handle validation errors with structured response."""
-    logger.warning(f"Validation error on {request.url.path}: {exc}")
+    logger.warning(f"Validation error on {payload.url.path}: {exc}")
     
     return JSONResponse(
         status_code=422,

@@ -82,11 +82,12 @@ class Settings:
     
     @property
     def redis_host(self) -> str:
-        elasticache_from_secret = secrets_manager.get_secret("elasticache_endpoint", "AWS_ELASTICACHE_ENDPOINT")
-        if elasticache_from_secret:
-            return f"redis://{elasticache_from_secret}"
-        
-        return os.getenv('REDIS_URL', 'redis://localhost:6379')
+        if self.is_production:
+            elasticache_from_secret = secrets_manager.get_secret("elasticache_endpoint", "AWS_ELASTICACHE_ENDPOINT")
+            if elasticache_from_secret:
+                return f"redis://{elasticache_from_secret}"
+    
+        return os.getenv('REDIS_URL', 'redis://localhost')
         
     @property
     def redis_port(self) -> str:
@@ -136,19 +137,26 @@ class Settings:
     
     @property
     def openai_api_key(self) -> str:
-        key = secrets_manager.get_openai_api_key()
+        if self.is_production:
+            key = secrets_manager.get_openai_api_key()
+        else:
+            key = os.getenv('OPENAI_API_KEY')
+
         if not key:
             raise ValueError("OpenAI API key not configured")
         return key
 
     @property
     def langsmith_api_key(self) -> Optional[str]:
-        return secrets_manager.get_langsmith_api_key()
+        if self.is_production:
+            return secrets_manager.get_langsmith_api_key()
+        return os.getenv('LANGSMITH_API_KEY', None)
 
     @property
     def jwt_secret_key(self) -> str:
-        val = secrets_manager.get_secret("jwt_secret_key", "JWT_SECRET_KEY")
-        return val or os.getenv('JWT_SECRET_KEY', 'your-secret-key-change-in-production')
+        if self.is_production:
+            val = secrets_manager.get_secret("jwt_secret_key", "JWT_SECRET_KEY")
+        return os.getenv('JWT_SECRET_KEY', 'your-secret-key-change-in-production')
     
     # COST MONITORING
     @property

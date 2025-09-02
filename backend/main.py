@@ -4,12 +4,18 @@ from dotenv import load_dotenv
 import logging
 import time
 import os
-from datetime import datetime
-
 from fastapi.responses import JSONResponse
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+from redis_cache.redis_cache import cache 
 from routes.health import router as health_router
 from routes.enhanced_chat import router as enhanced_chat_router
 from routes.evaluation import router as evaluation_router
@@ -18,12 +24,6 @@ from config.settings import settings
 from config.database import get_db, db_manager
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.cost_monitoring_middleware import CostMonitoringMiddleware
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 os.environ["OPENAI_API_KEY"] = settings.openai_api_key
 if settings.langsmith_api_key and not os.getenv("LANGSMITH_API_KEY"):

@@ -24,16 +24,10 @@ export const useChatAPI = (options: UseChatAPIOptions = {}) => {
         question,
         user_id: options.userId || 'anonymous',
         complexity_level: 'simple',
-        use_tools: true,
-        use_hybrid_search: true,
-        bypass_cache: false,
-        include_citations: true,
-        max_sources: 5,
       } : {
         question,
         user_id: options.userId || 'anonymous',
         session_id: 'user-session-' + Date.now(),
-        use_tools: true,
         complexity_level: 'simple',
       };
 

@@ -89,7 +89,7 @@ class OpenAIService:
             try:
                 # Create the coroutine and await it
                 coro = call_coroutine_factory(model_to_try)
-                result = await coro
+                result = await coro()
                 return result, model_to_try, None
             except Exception as e:
                 last_exec = e

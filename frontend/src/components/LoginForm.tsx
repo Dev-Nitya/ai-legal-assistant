@@ -81,7 +81,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
         </h2>
         <p className="text-gray-600">
           {isLogin
-            ? "Sign in to access your AI Legal Assistant"
+            ? "Sign in to access our AI Legal Assistant"
             : "Join the AI Legal Assistant platform"}
         </p>
       </div>

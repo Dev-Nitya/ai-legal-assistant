@@ -7,6 +7,8 @@ from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from config.settings import settings
 
+from redis_cache.redis_cache import cache as global_cache
+
 logger = logging.getLogger(__name__)
 
 class RateLimitStorage(ABC):
@@ -42,7 +44,15 @@ class RedisRateLimitStorage(RateLimitStorage):
     """
 
     def __init__(self, redis_client: Optional[redis.Redis] = None):
-        self.redis_client = redis_client
+        self.redis_client = redis_client or getattr(global_cache, "client", None)
+        if self.redis_client:
+            logger.info("🔗 Using shared Redis client for rate limiting")
+            try:
+                self.redis_client.ping()
+            except Exception as e:
+                logger.info(f"⚠️ Shared Redis client unavailable for rate limiting: {e}")
+                self.redis_client = None
+                
         if not self.redis_client:
             try:
                 self.redis_client = redis.Redis(
@@ -56,7 +66,7 @@ class RedisRateLimitStorage(RateLimitStorage):
                 self.redis_client.ping()
                 logger.info("✅ Redis rate limit storage connected")
             except Exception as e:
-                logger.warning(f"⚠️ Redis unavailable for rate limiting: {e}")
+                logger.info(f"⚠️ Redis unavailable for rate limiting: {e}")
                 self.redis_client = None
 
     def increment_and_check(self, key: str, window_seconds: int, limit: int) -> Tuple[int, bool]:

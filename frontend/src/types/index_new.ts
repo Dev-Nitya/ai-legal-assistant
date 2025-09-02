@@ -68,12 +68,6 @@ export interface EnhancedChatRequest {
   user_id: string;
   question: string;
   complexity_level: ComplexityLevel;
-  use_tools: boolean;
-  use_hybrid_search: boolean;
-  filters?: DocumentFilters;
-  bypass_cache: boolean;
-  include_citations: boolean;
-  max_sources: number;
 }
 
 export interface SourceDocument {
@@ -110,7 +104,6 @@ export interface RetrievalStats {
   documents_retrieved: number;
   unique_sources: number;
   average_relevance: number;
-  hybrid_search_used: boolean;
   search_time_ms?: number;
 }
 
@@ -196,9 +189,4 @@ export interface AppState {
 
 export interface ChatSettings {
   complexity_level: ComplexityLevel;
-  use_tools: boolean;
-  use_hybrid_search: boolean;
-  include_citations: boolean;
-  max_sources: number;
-  filters: DocumentFilters;
 }

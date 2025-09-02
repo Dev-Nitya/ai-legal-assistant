@@ -153,7 +153,7 @@ async def evaluate_single_question(request: SingleEvaluationRequest):
             model="gpt-3.5-turbo"  # Use consistent model for evaluation
         )
         
-        generated_answer = result["response"]
+        generated_answer = result.get("response")
 
         # # Step 3: Convert retrieved docs to standard format for evaluation
         # # The RAG evaluator expects documents in a specific format

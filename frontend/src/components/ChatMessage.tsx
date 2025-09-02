@@ -12,8 +12,20 @@ interface ChatMessageProps {
   message: Message;
 }
 
+function safeTimestamp(ts: unknown): Date {
+  if (!ts) return new Date();
+  if (ts instanceof Date) return ts;
+  if (typeof ts === "number") return new Date(ts);
+  if (typeof ts === "string") {
+    const parsed = Date.parse(ts);
+    return isNaN(parsed) ? new Date() : new Date(parsed);
+  }
+  return new Date();
+}
+
 const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   const isUser = message.sender === "user";
+  const timestamp = safeTimestamp(message.timestamp);
 
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-6`}>
@@ -51,12 +63,14 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
           <div className={`${isUser ? "text-white" : "text-gray-800"}`}>
             {isUser ? (
               // User messages as plain text
-              <p className="whitespace-pre-wrap">{message.content}</p>
+              <p className="whitespace-pre-wrap break-words">
+                {message.content}
+              </p>
             ) : (
               // Assistant messages as HTML
               <div
                 className="prose prose-sm max-w-none prose-headings:text-gray-800 prose-p:text-gray-800 prose-strong:text-gray-900 prose-em:text-gray-700 prose-ul:text-gray-800 prose-ol:text-gray-800 prose-blockquote:text-gray-700 prose-blockquote:border-amber-500"
-                dangerouslySetInnerHTML={{ __html: message.content }}
+                dangerouslySetInnerHTML={{ __html: message.content || "" }}
               />
             )}
           </div>
@@ -64,20 +78,6 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
           {/* Message Metadata */}
           {!isUser && (
             <div className="mt-3 pt-3 border-t border-gray-100">
-              {/* Confidence Score */}
-              {message.confidence && (
-                <div className="flex items-center text-xs text-gray-500 mb-2">
-                  {message.confidence >= 0.8 ? (
-                    <CheckCircle className="w-3 h-3 text-green-500 mr-1" />
-                  ) : (
-                    <AlertCircle className="w-3 h-3 text-amber-500 mr-1" />
-                  )}
-                  <span>
-                    Confidence: {Math.round(message.confidence * 100)}%
-                  </span>
-                </div>
-              )}
-
               {/* Sources */}
               {message.sources && message.sources.length > 0 && (
                 <div className="mb-2">
@@ -100,7 +100,12 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
               {/* Timestamp */}
               <div className="flex items-center text-xs text-gray-400">
                 <Clock className="w-3 h-3 mr-1" />
-                <span>{message.timestamp.toLocaleTimeString()}</span>
+                <span>
+                  {timestamp.toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
               </div>
             </div>
           )}

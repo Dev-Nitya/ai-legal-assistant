@@ -9,9 +9,12 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from datetime import datetime
 
 from schemas.base import BaseRequestModel, BaseResponseModel, ComplexityLevel, DocumentType
-from schemas.validation import ValidationError, validate_filters_dict
+from schemas.validation import ValidationError
 from validators.legal import validate_legal_question
 from validators.security import detect_prompt_injection
+
+import logging
+logger = logging.getLogger(__name__)
 
 class ChatRequest(BaseRequestModel):
     """Basic chat request model."""
@@ -67,31 +70,6 @@ class EnhancedChatRequest(BaseRequestModel):
         ComplexityLevel.SIMPLE,
         description="Desired complexity level for the response"
     )
-
-    use_tools: bool = Field(
-        True,
-        description="Whether to use specialized legal tools for research"
-    )
-    
-    use_hybrid_search: bool = Field(
-        True,
-        description="Whether to use hybrid search (BM25 + semantic) for document retrieval"
-    )
-    
-    filters: Optional[Dict[str, Any]] = Field(
-        None,
-        description="Document filters for targeted search"
-    )
-
-    bypass_cache: bool = Field(
-        False,
-        description="Whether to bypass cached results"
-    )
-    
-    include_citations: bool = Field(
-        True,
-        description="Whether to include source citations in the response"
-    )
     
     max_sources: int = Field(
         5,
@@ -110,41 +88,13 @@ class EnhancedChatRequest(BaseRequestModel):
             return validated
         except ValidationError as e:
             raise ValueError(str(e))
-        
-    @field_validator('filters')
-    def validate_document_filters(cls, v):
-        if v is None:
-            return None
-        try:
-            return validate_filters_dict(v)
-        except ValidationError as e:
-            raise ValueError(str(e))
-        
-    @model_validator(mode='after')
-    def validate_request_combination(cls, values):
-        print(f"Validating combined request values: {values}")
-        use_hybrid = values.use_hybrid_search
-        filters = values.filters
-        
-        if filters and not use_hybrid:
-            complex_filters = any(key in filters for key in ['legal_topics', 'jurisdiction'])
-            if complex_filters:
-                raise ValueError("Complex filters require hybrid search to be enabled")
-        
-        return values
+    
     
     class Config:
         schema_extra = {
             "example": {
                 "question": "What are the liability implications for directors in a Delaware C-Corp during bankruptcy proceedings?",
                 "complexity_level": "advanced",
-                "use_tools": True,
-                "use_hybrid_search": True,
-                "filters": {
-                    "document_types": ["case_law", "statute"],
-                    "jurisdiction": "Delaware",
-                    "legal_topics": ["corporate law", "bankruptcy"]
-                },
                 "max_sources": 5,
                 "request_id": "req_enhanced_001"
             }
@@ -191,7 +141,6 @@ class RetrievalStats(BaseModel):
     documents_retrieved: int = Field(ge=0, description="Number of documents retrieved")
     unique_sources: int = Field(ge=0, description="Number of unique source documents")
     average_relevance: float = Field(ge=0.0, le=1.0, description="Average relevance score")
-    hybrid_search_used: bool = Field(description="Whether hybrid search was used")
     search_time_ms: Optional[int] = Field(None, ge=0, description="Search time in milliseconds")
 
 class ChatResponse(BaseResponseModel):

@@ -6,10 +6,9 @@ from sqlalchemy.orm import sessionmaker
 from contextlib import contextmanager
 
 from config.settings import settings
+from config.db_base import Base
 
 logger = logging.getLogger(__name__)
-
-Base = declarative_base()
 
 class DatabaseManager:
 
@@ -62,6 +61,7 @@ class DatabaseManager:
             # Import models so SQLAlchemy knows about them
             from models.user import User, UserSession, UserBudget
             
+            logger.info("🔧 Creating database tables if not exist...")
             # Create all tables
             Base.metadata.create_all(bind=self.engine)
             logger.info("✅ Database tables created/verified")

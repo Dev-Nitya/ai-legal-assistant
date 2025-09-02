@@ -5,8 +5,7 @@ import enum
 import uuid
 
 from config.cost_limits import UserTier
-
-Base = declarative_base()
+from config.db_base import Base
 
 class User(Base):
     __tablename__ = 'users'
