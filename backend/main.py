@@ -20,6 +20,8 @@ from routes.health import router as health_router
 from routes.enhanced_chat import router as enhanced_chat_router
 from routes.evaluation import router as evaluation_router
 from routes.auth import router as auth_router
+from routes.rerank_weights import router as rerank_weights_router
+from routes.eval_dashboard import router as eval_dashboard
 from config.settings import settings
 from config.database import get_db, db_manager
 from middleware.rate_limit_middleware import RateLimitMiddleware
@@ -75,6 +77,8 @@ app.include_router(health_router)
 app.include_router(auth_router, prefix="/api", tags=["authentication"])
 app.include_router(enhanced_chat_router, prefix="/api")
 app.include_router(evaluation_router, prefix="/api", tags=["evaluation"])
+app.include_router(rerank_weights_router, prefix="/api", tags=["rerank-weights"])
+app.include_router(eval_dashboard, prefix="/api", tags=["evaluation-dashboard"])
 
 # Global exception handler
 @app.exception_handler(Exception)

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import logging
@@ -47,6 +48,7 @@ class SingleEvaluationRequest(BaseModel):
     user_id: str = "evaluator"
     use_ground_truth: bool = False
     ground_truth_answer: Optional[str] = None
+    ground_truth_doc_ids: Optional[List[str]] = None
 
 class BatchEvaluationRequest(BaseModel):
     """
@@ -155,37 +157,14 @@ async def evaluate_single_question(request: SingleEvaluationRequest):
         
         generated_answer = result.get("response")
 
-        # # Step 3: Convert retrieved docs to standard format for evaluation
-        # # The RAG evaluator expects documents in a specific format
-        # standardized_docs = []
-        # for doc in retrieved_docs:
-        #     if hasattr(doc, 'page_content'):
-        #         # LangChain Document format
-        #         standardized_docs.append({
-        #             'content': doc.page_content,
-        #             'metadata': getattr(doc, 'metadata', {})
-        #         })
-        #     elif isinstance(doc, dict):
-        #         # Already in dict format
-        #         content = doc.get('content', '') or doc.get('text', '') or doc.get('page_content', '')
-        #         standardized_docs.append({
-        #             'content': content,
-        #             'metadata': doc.get('metadata', {})
-        #         })
-        #     else:
-        #         # String or other format
-        #         standardized_docs.append({
-        #             'content': str(doc),
-        #             'metadata': {}
-        #         })
-
         # Step 4: Evaluate the quality of the response
         evaluation_result = await rag_evaluator.evaluate_rag_response(
             user_id=request.user_id,
             question=request.question,
             retrieved_documents=retrieved_docs,
             generated_answer=generated_answer,
-            ground_truth_answer=request.ground_truth_answer if request.use_ground_truth else None
+            ground_truth_answer=request.ground_truth_answer if request.use_ground_truth else None,
+            ground_truth_doc_ids=request.ground_truth_doc_ids if request.use_ground_truth else None
         )
         
         # Step 5: Calculate processing time
@@ -201,7 +180,10 @@ async def evaluate_single_question(request: SingleEvaluationRequest):
                 "retrieval_precision_at_5": float(evaluation_result.retrieval_precision_at_5),
                 "answer_relevance": float(evaluation_result.answer_relevance),
                 "answer_faithfulness": float(evaluation_result.answer_faithfulness),
-                "overall_score": float(evaluation_result.overall_score)
+                "overall_score": float(evaluation_result.overall_score),
+                "precision_at_1": float(getattr(evaluation_result, "precision_at_1", 0.0)),
+                "reciprocal_rank": float(getattr(evaluation_result, "reciprocal_rank", 0.0)),
+                "rank_of_first_relevant": getattr(evaluation_result, "rank_of_first_relevant", None),
             },
             retrieved_documents_count=len(retrieved_docs),
             processing_time_seconds=processing_time,
@@ -231,140 +213,224 @@ async def evaluate_single_question(request: SingleEvaluationRequest):
             
         raise HTTPException(status_code=500, detail=f"Evaluation failed: {str(e)}")
 
-@router.post("/evaluate/batch", response_model=BatchEvaluationResponse)
+@router.post("/evaluate/batch")
 async def evaluate_batch_questions(request: BatchEvaluationRequest):
     """
-    Evaluate multiple questions from our test dataset.
-    
-    SIMPLE EXPLANATION:
-    This endpoint runs a comprehensive test using our pre-defined
-    legal questions. It's like giving your AI system a standardized
-    exam and getting a detailed report card.
-    
-    HOW IT WORKS:
-    1. Get test questions from our evaluation dataset
-    2. Filter by category/difficulty if requested
-    3. Run each question through the RAG system
-    4. Evaluate each response
-    5. Calculate summary statistics across all questions
-    6. Return comprehensive results
+    Run a batch evaluation over the evaluation dataset and return a canonical,
+    easy-to-store run payload.
+
+    Return shape (JSON):
+      - total_questions_tested: int
+      - average_scores: dict (aggregated numeric metrics)
+      - individual_results: list (per-question detailed results)
+      - category_breakdown: dict (average metrics per category)
+      - summary: dict (timing + counts)
+      - metrics: dict (flat numeric metrics for dashboard)
+      - samples: list (compact per-question objects suitable for DB/UI)
+      - meta: dict (run configuration + reproducibility info)
+
+    This replaces the previous implementation with a clearer, consistent output
+    so the eval dashboard can persist useful runs.
     """
-    
-    logger.info(f"🔍 Starting batch evaluation with filters - category: {request.category}, difficulty: {request.difficulty}")
-    start_time = datetime.utcnow()
-    
+    import json
+    import time
+    from datetime import datetime
+
+    start_ts = int(time.time() * 1000)
+    start_dt = datetime.utcnow()
     try:
-        # Step 1: Get the questions to test
+        # 1) Prepare questions
         all_questions = legal_eval_dataset.get_all_questions()
-        
-        # Filter by category if specified
         if request.category:
             questions_to_test = legal_eval_dataset.get_questions_by_category(request.category)
-            logger.info(f"Filtered to {len(questions_to_test)} questions in category '{request.category}'")
         elif request.difficulty:
             questions_to_test = legal_eval_dataset.get_questions_by_difficulty(request.difficulty)
-            logger.info(f"Filtered to {len(questions_to_test)} questions with difficulty '{request.difficulty}'")
         else:
             questions_to_test = all_questions
-            logger.info(f"Testing all {len(questions_to_test)} questions")
-        
-        # Limit the number of questions if requested
-        if len(questions_to_test) > request.max_questions:
-            questions_to_test = questions_to_test[:request.max_questions]
-            logger.info(f"Limited to {request.max_questions} questions")
-        
-        # Step 2: Evaluate each question
+
+        # enforce max_questions limit
+        limit = int(getattr(request, "max_questions", 10) or 10)
+        if len(questions_to_test) > limit:
+            questions_to_test = questions_to_test[:limit]
+
+        total = len(questions_to_test)
+
+        # 2) Evaluate each question (reuse evaluate_single_question)
         individual_results = []
-        all_scores = {
+        # collectors for averages
+        collectors = {
             "retrieval_precision_at_3": [],
             "retrieval_precision_at_5": [],
             "answer_relevance": [],
             "answer_faithfulness": [],
-            "overall_score": []
+            "overall_score": [],
+            "processing_time_seconds": [],
+            "retrieved_documents_count": [],
+            "precision_at_1": [],
+            "reciprocal_rank": [],
         }
         category_scores = {}
-        
-        for i, question in enumerate(questions_to_test):
-            logger.info(f"Evaluating question {i+1}/{len(questions_to_test)}: {question.id}")
-            
+
+        for i, q in enumerate(questions_to_test):
             try:
-                # Create single evaluation request
-                single_request = SingleEvaluationRequest(
-                    question=question.question,
+                single_req = SingleEvaluationRequest(
+                    question=q.question,
                     user_id=request.user_id,
                     use_ground_truth=True,
-                    ground_truth_answer=question.expected_answer
+                    ground_truth_answer=getattr(q, "expected_answer", None),
+                    ground_truth_doc_ids=getattr(q, "ground_truth_doc_ids", None)
                 )
-                
-                # Evaluate this question
-                single_result = await evaluate_single_question(single_request)
-                individual_results.append(single_result)
-                
-                # Collect scores for summary statistics
-                eval_scores = single_result.evaluation_result
-                for metric in all_scores.keys():
-                    all_scores[metric].append(eval_scores[metric])
-                
-                # Collect scores by category
-                if question.category not in category_scores:
-                    category_scores[question.category] = {metric: [] for metric in all_scores.keys()}
-                
-                for metric in all_scores.keys():
-                    category_scores[question.category][metric].append(eval_scores[metric])
-                
+                single_resp = await evaluate_single_question(single_req)
+                # single_resp is an EvaluationResponse pydantic model
+                item = convert_numpy_types(single_resp.dict())
+                individual_results.append(item)
+
+                # collect numeric metrics if present (defensive)
+                ers = item.get("evaluation_result", {}) or {}
+                # safe-get with defaults
+                collectors["retrieval_precision_at_3"].append(float(ers.get("retrieval_precision_at_3", 0.0)))
+                collectors["retrieval_precision_at_5"].append(float(ers.get("retrieval_precision_at_5", 0.0)))
+                collectors["answer_relevance"].append(float(ers.get("answer_relevance", 0.0)))
+                collectors["answer_faithfulness"].append(float(ers.get("answer_faithfulness", 0.0)))
+                collectors["overall_score"].append(float(ers.get("overall_score", 0.0)))
+                collectors["precision_at_1"].append(float(ers.get("precision_at_1", 0.0)))
+                collectors["reciprocal_rank"].append(float(ers.get("reciprocal_rank", 0.0)))
+                collectors["processing_time_seconds"].append(float(item.get("processing_time_seconds", 0.0)))
+                collectors["retrieved_documents_count"].append(int(item.get("retrieved_documents_count", 0)))
+
+                # per-category aggregation
+                cat = getattr(q, "category", "unknown")
+                category_scores.setdefault(cat, {
+                    "retrieval_precision_at_3": [],
+                    "retrieval_precision_at_5": [],
+                    "answer_relevance": [],
+                    "answer_faithfulness": [],
+                    "overall_score": [],
+                })
+                category_scores[cat]["retrieval_precision_at_3"].append(float(ers.get("retrieval_precision_at_3", 0.0)))
+                category_scores[cat]["retrieval_precision_at_5"].append(float(ers.get("retrieval_precision_at_5", 0.0)))
+                category_scores[cat]["answer_relevance"].append(float(ers.get("answer_relevance", 0.0)))
+                category_scores[cat]["answer_faithfulness"].append(float(ers.get("answer_faithfulness", 0.0)))
+                category_scores[cat]["overall_score"].append(float(ers.get("overall_score", 0.0)))
+
             except Exception as e:
-                logger.error(f"❌ Failed to evaluate question {question.id}: {e}")
-                # Continue with other questions even if one fails
+                # Log and continue - individual failures shouldn't break the whole batch
+                logger.exception("Failed evaluating question %s: %s", getattr(q, "id", f"#{i}"), e)
                 continue
-        
-        # Step 3: Calculate summary statistics
-        average_scores = {}
-        for metric, scores in all_scores.items():
-            if scores:  # Only calculate if we have scores
-                average_scores[metric] = float(sum(scores) / len(scores))
-            else:
-                average_scores[metric] = 0.0
-        
-        # Calculate category breakdowns
-        category_breakdown = {}
-        for category, scores in category_scores.items():
-            category_breakdown[category] = {}
-            for metric, metric_scores in scores.items():
-                if metric_scores:
-                    category_breakdown[category][metric] = float(sum(metric_scores) / len(metric_scores))
-                else:
-                    category_breakdown[category][metric] = 0.0
-        
-        # Step 4: Create summary
-        end_time = datetime.utcnow()
-        total_time = (end_time - start_time).total_seconds()
-        
-        summary = {
-            "total_processing_time_seconds": total_time,
-            "average_processing_time_per_question": total_time / len(individual_results) if individual_results else 0,
-            "successful_evaluations": len(individual_results),
-            "failed_evaluations": len(questions_to_test) - len(individual_results),
-            "best_performing_category": max(category_breakdown.keys(), 
-                                          key=lambda k: category_breakdown[k]["overall_score"]) if category_breakdown else None,
-            "worst_performing_category": min(category_breakdown.keys(), 
-                                           key=lambda k: category_breakdown[k]["overall_score"]) if category_breakdown else None
+
+        # 3) Compute aggregated averages (safe division)
+        def safe_mean(lst):
+            return float(sum(lst) / len(lst)) if lst else 0.0
+
+        average_scores = {
+            "retrieval_precision_at_3": safe_mean(collectors["retrieval_precision_at_3"]),
+            "retrieval_precision_at_5": safe_mean(collectors["retrieval_precision_at_5"]),
+            "answer_relevance": safe_mean(collectors["answer_relevance"]),
+            "answer_faithfulness": safe_mean(collectors["answer_faithfulness"]),
+            "overall_score": safe_mean(collectors["overall_score"]),
+            "avg_processing_time_seconds": safe_mean(collectors["processing_time_seconds"]),
+            "avg_retrieved_documents_count": safe_mean(collectors["retrieved_documents_count"]),
         }
-        
-        # Step 5: Create the response with NumPy type conversion
-        response_data = {
+
+        # 4) Category breakdown: mean per metric
+        category_breakdown = {}
+        for cat, data in category_scores.items():
+            category_breakdown[cat] = {
+                "retrieval_precision_at_3": safe_mean(data["retrieval_precision_at_3"]),
+                "retrieval_precision_at_5": safe_mean(data["retrieval_precision_at_5"]),
+                "answer_relevance": safe_mean(data["answer_relevance"]),
+                "answer_faithfulness": safe_mean(data["answer_faithfulness"]),
+                "overall_score": safe_mean(data["overall_score"]),
+            }
+
+        # 5) Build compact metrics for the dashboard (flat numerics)
+        # Additional derived metrics:
+        # - hallucination_rate: fraction where answer_faithfulness < 0.5
+        faithfulness_list = collectors["answer_faithfulness"]
+        hallucination_rate = float(sum(1 for v in faithfulness_list if v < 0.5) / len(faithfulness_list)) if faithfulness_list else 0.0
+        retrieval_coverage = float(sum(1 for c in collectors["retrieved_documents_count"] if c > 0) / len(collectors["retrieved_documents_count"])) if collectors["retrieved_documents_count"] else 0.0
+        mrr = safe_mean(collectors.get("reciprocal_rank", []))
+        p_at_1 = safe_mean(collectors.get("precision_at_1", []))
+
+        metrics = {
+            "precision_at_3": average_scores["retrieval_precision_at_3"],
+            "precision_at_5": average_scores["retrieval_precision_at_5"],
+            "mrr": mrr,
+            "p_at_1": p_at_1,
+            "answer_relevance": average_scores["answer_relevance"],
+            "answer_faithfulness": average_scores["answer_faithfulness"],
+            "overall_score": average_scores["overall_score"],
+            "hallucination_rate": hallucination_rate,
+            "avg_response_time_ms": int(average_scores["avg_processing_time_seconds"] * 1000),
+            "retrieval_coverage": retrieval_coverage,
+            "raw_aggregates": average_scores,
+        }
+
+        # 6) Prepare samples: compact per-question objects for DB/UI
+        samples = []
+        for idx, item in enumerate(individual_results):
+            q_text = item.get("question", "") if isinstance(item, dict) else ""
+            ans = item.get("generated_answer", "") if isinstance(item, dict) else ""
+            ans_preview = (ans[:2000] + "...") if len(ans) > 2000 else ans
+            eval_res = item.get("evaluation_result", {}) if isinstance(item, dict) else {}
+            samples.append({
+                "idx": idx,
+                "question": q_text,
+                "generated_answer_preview": ans_preview,
+                "evaluation_result": eval_res,
+                "retrieved_documents_count": item.get("retrieved_documents_count", 0),
+                # retrieved_documents_preview is not available in current single_eval - leave empty list
+                "retrieved_documents_preview": [],
+                "processing_time_seconds": item.get("processing_time_seconds", 0.0),
+            })
+
+        # 7) Meta: record run parameters for reproducibility
+        meta = {
+            "limit": limit,
+            "category": request.category,
+            "difficulty": request.difficulty,
+            "run_ts": start_ts,
+            "run_started_at": start_dt.isoformat(),
+        }
+        # try to include rerank weights if available in Redis (non-fatal)
+        try:
+            from redis_cache.redis_cache import cache as _cache
+            raw_w = _cache.get("eval_rerank_weights")
+            if raw_w:
+                parsed_w = raw_w if isinstance(raw_w, dict) else json.loads(raw_w)
+                meta["rerank_weights"] = {"alpha": float(parsed_w.get("alpha", 0.0)), "beta": float(parsed_w.get("beta", 0.0))}
+        except Exception:
+            pass
+
+        # 8) Summary: counts and timing
+        end_dt = datetime.utcnow()
+        total_time_seconds = (end_dt - start_dt).total_seconds()
+        summary = {
+            "total_processing_time_seconds": total_time_seconds,
+            "average_processing_time_per_question": average_scores.get("avg_processing_time_seconds", 0.0),
+            "successful_evaluations": len(individual_results),
+            "failed_evaluations": total - len(individual_results),
+        }
+
+        # 9) Compose response payload (keep legacy fields too for compatibility)
+        response_payload = {
             "total_questions_tested": len(individual_results),
             "average_scores": convert_numpy_types(average_scores),
-            "individual_results": [convert_numpy_types(result.dict()) for result in individual_results],
+            "individual_results": individual_results,
             "category_breakdown": convert_numpy_types(category_breakdown),
-            "summary": convert_numpy_types(summary)
+            "summary": convert_numpy_types(summary),
+            # canonical fields for dashboard/storage
+            "metrics": metrics,
+            "samples": samples,
+            "meta": meta,
         }
-        
-        response = BatchEvaluationResponse(**response_data)
-        
-        logger.info(f"✅ Batch evaluation complete. Tested {len(individual_results)} questions. "
-                   f"Average overall score: {average_scores.get('overall_score', 0):.3f}")
-        
-        return response
+
+        logger.info("✅ Batch evaluation complete: tested=%s overall_score=%.3f", len(individual_results), average_scores.get("overall_score", 0.0))
+        return JSONResponse(content=response_payload)
+
+    except Exception as e:
+        logger.exception("Batch evaluation failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Batch evaluation failed: {str(e)}")
         
     except Exception as e:
         # Get detailed error information including line number

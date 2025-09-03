@@ -9,6 +9,7 @@ import {
   FiLoader as Loader2,
   FiSettings as Settings,
   FiBarChart as BarChart3,
+  FiTrendingUp as TrendingUp,
   FiUser as User,
   FiLogIn as LogIn,
   FiX as X,
@@ -19,6 +20,8 @@ import LoginForm from "./components/LoginForm";
 import UserDashboard from "./components/UserDashboard";
 import AdvancedChatSettings from "./components/AdvancedChatSettings";
 import EvaluationInterface from "./components/EvaluationInterface";
+import EvaluationDashboard from "./components/EvaluationDashboard";
+import RerankWeightsControl from "./components/RerankWeightsControl";
 import { useEnhancedChatWithBudget } from "./hooks/useEnhancedChatWithBudget";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { ToastProvider } from "./components/Toast";
@@ -31,7 +34,7 @@ const MainApp: React.FC = () => {
   const [inputValue, setInputValue] = useState("");
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [activeView, setActiveView] = useState<
-    "chat" | "evaluation" | "settings"
+    "chat" | "evaluation" | "dashboard" | "settings"
   >("chat");
   const [showLogin, setShowLogin] = useState(false);
   const [showUserDashboard, setShowUserDashboard] = useState(false);
@@ -197,6 +200,18 @@ const MainApp: React.FC = () => {
                   whileTap={{ scale: 0.95 }}
                 >
                   <BarChart3 className="h-5 w-5" />
+                </motion.button>
+                <motion.button
+                  onClick={() => setActiveView("dashboard")}
+                  className={`p-2 rounded-lg transition-all duration-200 ${
+                    activeView === "dashboard"
+                      ? "bg-primary-500 text-white shadow-md"
+                      : "text-gray-600 hover:text-gray-800 hover:bg-white/50"
+                  }`}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                >
+                  <TrendingUp className="h-5 w-5" />
                 </motion.button>
                 <motion.button
                   onClick={() => setActiveView("settings")}
@@ -489,14 +504,29 @@ const MainApp: React.FC = () => {
             />
           )}
 
+          {activeView === "dashboard" && (
+            <EvaluationDashboard token={token || undefined} />
+          )}
+
           {activeView === "settings" && (
-            <AdvancedChatSettings
-              complexity={chatSettings.complexity}
-              onComplexityChange={(complexity) =>
-                setChatSettings((prev) => ({ ...prev, complexity }))
-              }
-              onReset={resetChatSettings}
-            />
+            <div className="space-y-6">
+              <AdvancedChatSettings
+                complexity={chatSettings.complexity}
+                onComplexityChange={(complexity) =>
+                  setChatSettings((prev) => ({ ...prev, complexity }))
+                }
+                onReset={resetChatSettings}
+              />
+
+              {/* Rerank Weights Control */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2, duration: 0.6 }}
+              >
+                <RerankWeightsControl />
+              </motion.div>
+            </div>
           )}
         </div>
 

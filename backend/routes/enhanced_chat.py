@@ -1,3 +1,4 @@
+import json
 from fastapi.responses import JSONResponse
 from fastapi import Depends, APIRouter, BackgroundTasks, HTTPException, Request
 from langchain_openai import ChatOpenAI
@@ -62,6 +63,19 @@ IMPORTANT: Format your response in HTML with the following structure (Follow all
 Answer the user's question comprehensively using the above context in HTML format.
 """
 
+EVAL_ALPHA = 0.75  # weight for retriever similarity
+EVAL_BETA = 0.25   # weight for offline eval_score
+
+try:
+    raw_weights = cache.get("eval_rerank_weights")
+    if raw_weights:
+        parsed_weights = raw_weights if isinstance(raw_weights, dict) else json.loads(raw_weights)
+        EVAL_ALPHA = float(parsed_weights.get("alpha", EVAL_ALPHA))
+        EVAL_BETA = float(parsed_weights.get("beta", EVAL_BETA))
+        logger.info("Loaded rerank weights from cache: alpha=%s beta=%s", EVAL_ALPHA, EVAL_BETA)
+except Exception:
+    logger.debug("No persisted rerank weights found or failed to load")
+
 @router.post("/enhanced-chat", response_model=EnhancedChatResponse)
 async def enhanced_chat(
     payload: EnhancedChatRequest,
@@ -88,8 +102,6 @@ async def enhanced_chat(
 
         # Step 2: Process and analyze query
         query_analysis = query_processor.preprocess_query(payload.question)
-        print(f"Query Analysis: {query_analysis}")
-
 
         # Step 4: Enhanced retrieval
         if enhanced_retriever:
@@ -104,6 +116,34 @@ async def enhanced_chat(
             # Fallback to basic retrieval
             retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
             relevant_docs = retriever.get_relevant_documents(payload.question)
+
+        enriched = []
+        for doc in relevant_docs:
+            meta = getattr(doc, "metadata", {}) or {}
+            doc_id = meta.get("id") or meta.get("source_file") or meta.get("source") or f"{meta.get('source','unknown')}:{meta.get('page','-')}"
+
+            try:
+                similiarity_score = float(getattr(doc, "score", None) or meta.get("similarity") or 0.0)
+            except Exception:
+                similiarity_score = 0.0
+            
+            eval_score = 0
+            try:
+                raw = cache.get(f"eval_score:{doc_id}")
+                if raw:
+                    parsed = raw if isinstance(raw, dict) else json.loads(raw)
+                    eval_score = float(parsed.get("score", 0.0))
+            except Exception:
+                logger.info("Could not load eval_score for %s", doc_id)
+
+            combined = (EVAL_ALPHA * similiarity_score) + (EVAL_BETA * eval_score)
+            enriched.append((combined, doc))
+
+        enriched.sort(key=lambda x: x[0], reverse=True)
+
+        # replace relevant_docs with reranked docs
+        relevant_docs = [doc for _, doc in enriched]
+        logger.info(f"Reranked documents based on combined score")
 
         # Step 5: Calculate confidence based on retrieval quality
         confidence = calculate_confidence(relevant_docs, query_analysis)
@@ -122,7 +162,6 @@ async def enhanced_chat(
             )
 
         if confidence < 0.7:
-            print(f"Confidence low ({confidence:.2f}), using tools.")
             # Use tools when confidence is low
             prompt = ChatPromptTemplate.from_messages([
                 ("system", ENHANCED_LEGAL_PROMPT),
@@ -150,7 +189,6 @@ async def enhanced_chat(
             answer = result['output']
             tools_used = [tool.name for tool in ALL_TOOLS]
         else:
-            print(f"Confidence high ({confidence:.2f}), skipping tools.")
             # Use direct LLM with context
             prompt = ENHANCED_LEGAL_PROMPT.format(
                 complexity_level=payload.complexity_level,

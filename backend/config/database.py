@@ -60,6 +60,7 @@ class DatabaseManager:
         try:
             # Import models so SQLAlchemy knows about them
             from models.user import User, UserSession, UserBudget
+            from models.eval_run import EvalRun
             
             logger.info("🔧 Creating database tables if not exist...")
             # Create all tables
