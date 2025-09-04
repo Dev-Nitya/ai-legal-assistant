@@ -7,8 +7,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from typing import List, Dict
 import time
 import logging
-
 from requests import Session
+import re
 
 from config.settings import settings
 from config.database import get_db
@@ -333,7 +333,20 @@ def format_context(docs: List) -> str:
     return "\n---\n".join(context_parts)
 
 def extract_citations(docs: List) -> List[Dict]:
-    """Extract structured citations from documents"""
+    """Extract structured citations from documents with robust metadata handling"""
+    
+    def _ensure_list(value):
+        """Ensure a value is a list, handling ChromaDB serialization issues"""
+        if isinstance(value, list):
+            return value
+        elif isinstance(value, str):
+            # Convert empty strings to empty lists (ChromaDB serialization issue)
+            return [] if value.strip() == '' else [value]
+        elif value is None:
+            return []
+        else:
+            return [str(value)]
+    
     citations = []
     seen = set()
     
@@ -343,8 +356,8 @@ def extract_citations(docs: List) -> List[Dict]:
             citation = {
                 "source": source,
                 "type": doc.metadata.get('document_type', 'legal_document'),
-                "sections": doc.metadata.get('extracted_sections', []),
-                "acts": doc.metadata.get('extracted_acts', []),
+                "sections": _ensure_list(doc.metadata.get('extracted_sections', [])),
+                "acts": _ensure_list(doc.metadata.get('extracted_acts', [])),
                 "page": doc.metadata.get('page', 'N/A')
             }
             citations.append(citation)

@@ -230,3 +230,26 @@ async def compare_runs(base: str, exp: str, db: Session = Depends(get_db)):
     samples = e.get("samples", [])[:10]
 
     return {"diffs": diffs, "base_meta": b.get("meta", {}), "exp_meta": e.get("meta", {}), "exp_samples": samples}
+
+@router.delete("/eval/name/{run_name}")
+async def delete_eval_run_by_name(run_name: str, db: Session = Depends(get_db)):
+    """
+    Delete an evaluation run by name.
+    Returns {"success": True, "id": <id>, "name": <name>} on success.
+    """
+    row = db.query(EvalRun).filter(EvalRun.name == run_name).one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Run not found")
+    
+    try:
+        name = row.name
+        db.delete(row)
+        db.commit()
+
+        logger.info("Deleted eval run name=%s", name)
+
+        return {"success": True, "name": name}
+
+    except Exception as e:
+        logger.exception("Failed to delete eval run name=%s: %s", run_name, e)
+        raise HTTPException(status_code=500, detail="Failed to delete run")

@@ -1,4 +1,6 @@
 import logging
+import os
+import pathlib
 import re
 import sys
 import traceback
@@ -50,7 +52,19 @@ def compute_retrieval_ranks(
     flags: List[bool] = []
     ground_text = (ground_truth_answer or "").strip().lower()
     marker_fields = relevance_marker_fields or ["is_relevant", "relevance", "relevance_score", "score"]
-    gt_ids = set([str(x) for x in (ground_truth_doc_ids or []) if x is not None])
+    
+    def _norm_id(val: Any) -> str:
+        try:
+            s = str(val)
+            base = os.path.basename(s)
+            stem = pathlib.Path(base).stem
+            normalized = stem.strip().lower().replace(" ", "_")
+            normalized = re.sub(r"[^a-z0-9_]", "", normalized)
+            return normalized if normalized else s.strip().lower()
+        except Exception:
+            return str(val).strip().lower()
+
+    gt_ids = set(_norm_id(x) for x in (ground_truth_doc_ids or []) if x is not None)
 
     for doc in retrieved_documents:
         try:
@@ -59,17 +73,18 @@ def compute_retrieval_ranks(
 
             doc_id = None
             try:
+                candidate = None
                 if isinstance(doc, dict):
                     for k in ("id", "doc_id", "source_id", "source_file"):
                         if k in doc and doc.get(k):
-                            doc_id = str(doc.get(k))
+                            candidate = str(doc.get(k))
                             break
                     # 2) Then check a 'metadata' field inside the dict (common shape)
-                    if not doc_id and isinstance(doc.get("metadata"), dict):
+                    if not candidate and isinstance(doc.get("metadata"), dict):
                         meta_tmp = doc.get("metadata") or {}
                         for k in ("id", "doc_id", "source_id", "source_file"):
                             if k in meta_tmp and meta_tmp.get(k):
-                                doc_id = str(meta_tmp.get(k))
+                                candidate = str(meta_tmp.get(k))
                                 break
                 else:
                    # 3) If doc is an object with attribute 'metadata'
@@ -77,8 +92,21 @@ def compute_retrieval_ranks(
                        meta_tmp = getattr(doc, "metadata") or {}
                        for k in ("id", "doc_id", "source_id", "source_file"):
                            if k in meta_tmp and meta_tmp.get(k):
-                               doc_id = str(meta_tmp.get(k))
+                               candidate = str(meta_tmp.get(k))
                                break
+                
+                if candidate:
+                    s = str(candidate)
+                    base = os.path.basename(s)
+                    stem = pathlib.Path(base).stem
+                    normalized = stem.strip().lower().replace(" ", "_")
+                    # keep only alnum and underscore
+                    normalized = re.sub(r"[^a-z0-9_]", "", normalized)
+                    doc_id = normalized if normalized else s.strip().lower()
+                else:
+                    doc_id = None
+                print(f"Normalized doc ID: {doc_id}, gt_ids: {gt_ids}")
+            
             except Exception:
                 doc_id = None
 

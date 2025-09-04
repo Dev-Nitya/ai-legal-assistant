@@ -14,7 +14,7 @@ from evaluation.rag_evaluator import rag_evaluator, EvaluationResult
 from evaluation.eval_dataset import legal_eval_dataset, EvaluationQuestion
 
 # Import your existing RAG system components
-from chain.retriever import enhanced_retriever
+from chain.retriever import enhanced_retriever, query_processor
 from services.openai_service import openai_service
 from routes.enhanced_chat import enhanced_chat
 
@@ -108,10 +108,12 @@ async def evaluate_single_question(request: SingleEvaluationRequest):
         # This reuses your existing enhanced chat logic
         print("Running question through RAG pipeline...")
         
+        query_analysis = query_processor.preprocess_query(request.question)
+
         # Use your existing retrieval system to find relevant documents
         retrieved_docs = enhanced_retriever.retrieve_with_filters(
             query=request.question,
-            filters=None,
+            filters=query_analysis.get("filters", {}),
             k=5  # Get top 5 most relevant documents
         )
 
@@ -164,7 +166,7 @@ async def evaluate_single_question(request: SingleEvaluationRequest):
             retrieved_documents=retrieved_docs,
             generated_answer=generated_answer,
             ground_truth_answer=request.ground_truth_answer if request.use_ground_truth else None,
-            ground_truth_doc_ids=request.ground_truth_doc_ids if request.use_ground_truth else None
+            ground_truth_doc_ids=request.ground_truth_doc_ids
         )
         
         # Step 5: Calculate processing time

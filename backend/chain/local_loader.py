@@ -9,6 +9,8 @@ from langchain_community.document_loaders import PyPDFLoader, DirectoryLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
+import re
+from collections import defaultdict
 
 from chain.utils import metadata_utils
 from config.settings import settings
@@ -81,6 +83,8 @@ def load_documents() -> List[Document]:
                     doc.page_content,
                     Path(pdf_file).name
                 )
+                enhanced_metadata = metadata_utils.sanitize_extracted_metadata(enhanced_metadata)
+                
                 doc.metadata.update(enhanced_metadata)
             all_docs.extend(docs)
             print(f"Loaded {len(docs)} pages from {pdf_file}")
@@ -92,6 +96,41 @@ def load_documents() -> List[Document]:
         print("Warning: No documents were loaded successfully.")
         return []
     
+    # --- Ingestion aggregation: compute per-PDF union of sections/acts and attach to every page ---
+    aggregate_sections = defaultdict(set)
+    aggregate_acts = defaultdict(set)
+
+    for d in all_docs:
+        src = d.metadata.get("source_file") or d.metadata.get("source")
+        
+        raw_sections = d.metadata.get("extracted_sections_norm") or d.metadata.get("extracted_sections") or []
+        if isinstance(raw_sections, str):
+            section_parts = re.split(r'\s*(?:,|;|\||/|and)\s*', raw_sections)
+        else:
+            section_parts = raw_sections
+        
+        for s in section_parts:
+            token = re.sub(r'[^0-9a-z]', '', str(s or "").lower())
+            if token:
+                aggregate_sections[src].add(token)
+        
+        raw_acts = d.metadata.get("extracted_acts_norm") or d.metadata.get("extracted_acts") or []
+        if isinstance(raw_acts, str):
+            act_parts = re.split(r'\s*(?:,|;|\||/|and)\s*', raw_acts)
+        else:
+            act_parts = raw_acts
+        for a in act_parts:
+            token = re.sub(r'[^0-9a-z_]', '', str(a or "").lower().replace(' ', '_'))
+            if token:
+                aggregate_acts[src].add(token)
+
+    # Attach aggregated normalized lists to every page of the same PDF
+    for d in all_docs:
+        src = d.metadata.get("source_file") or d.metadata.get("source")
+        d.metadata["aggregated_extracted_sections_norm"] = sorted(list(aggregate_sections.get(src, [])))
+        d.metadata["aggregated_extracted_acts_norm"] = sorted(list(aggregate_acts.get(src, [])))
+    # --- end aggregation ---
+
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
         chunk_overlap=200,
@@ -171,8 +210,9 @@ def create_vector_store(docs: List[Document]):
         embeddings = OpenAIEmbeddings(api_key=openai_key)
 
         os.makedirs(CHROMA_PERSIST_DIR, exist_ok=True)
+
         vector_store = Chroma.from_documents(
-            documents=[dummy_doc],
+            documents=dummy_doc,
             embedding=embeddings,
             persist_directory=CHROMA_PERSIST_DIR
         )
@@ -189,8 +229,17 @@ def create_vector_store(docs: List[Document]):
         embeddings = OpenAIEmbeddings(api_key=openai_key)
         os.makedirs(CHROMA_PERSIST_DIR, exist_ok=True)
 
+         # Chroma requires primitive metadata types. Create a separate list of Documents
+        # with serialized metadata for storage, but keep original 'docs' intact for runtime.
+        docs_for_store = []
+        for d in docs:
+            # Make a shallow copy of metadata then serialize
+            meta_copy = dict(d.metadata or {})
+            meta_serial = metadata_utils.serialize_metadata_for_storage(meta_copy)
+            docs_for_store.append(Document(page_content=d.page_content, metadata=meta_serial))
+
         vector_store = Chroma.from_documents(
-            documents=docs,
+            documents=docs_for_store,
             embedding=embeddings,
             persist_directory=CHROMA_PERSIST_DIR
         )

@@ -13,8 +13,8 @@ import {
   FiEye as Eye,
   FiGitBranch as GitCompare,
   FiX as X,
+  FiTrash2 as Trash2,
   FiPlay as Play,
-  FiPlus as Plus,
 } from "react-icons/fi";
 
 interface EvalRun {
@@ -70,6 +70,8 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
     created_by: "",
   });
   const [isRunning, setIsRunning] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [runToDelete, setRunToDelete] = useState<string | null>(null);
 
   const fetchRuns = useCallback(async () => {
     setLoading(true);
@@ -179,6 +181,32 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
       throw err;
     } finally {
       setIsRunning(false);
+    }
+  };
+
+  const deleteRun = async (runName: string) => {
+    try {
+      const response = await fetch(
+        `http://localhost:8000/api/eval/name/${encodeURIComponent(runName)}`,
+        {
+          method: "DELETE",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        }
+      );
+
+      if (!response.ok) throw new Error("Failed to delete evaluation run");
+
+      // Refresh the runs list after successful deletion
+      await fetchRuns();
+
+      // If the deleted run was currently selected, clear the selection
+      if (selectedRun && selectedRun.name === runName) {
+        setSelectedRun(null);
+        setActiveView("overview");
+      }
+    } catch (err: any) {
+      setError(err.message);
+      throw err;
     }
   };
 
@@ -430,15 +458,17 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: index * 0.05 }}
-                      className={`p-4 hover:bg-gray-50/50 transition-all duration-200 cursor-pointer ${
+                      className={`p-4 hover:bg-gray-50/50 transition-all duration-200 ${
                         compareMode && selectedForComparison.includes(run.name)
                           ? "bg-blue-50 border-l-4 border-blue-500"
                           : ""
                       }`}
-                      onClick={() => handleRunSelection(run.name)}
                     >
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-3">
+                        <div
+                          className="flex items-center space-x-3 flex-1 cursor-pointer"
+                          onClick={() => handleRunSelection(run.name)}
+                        >
                           {compareMode ? (
                             <div
                               className={`w-4 h-4 rounded border-2 ${
@@ -466,13 +496,28 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
                           </div>
                         </div>
 
-                        {!compareMode && (
-                          <div className="flex items-center space-x-2">
-                            <span className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded-full">
-                              View Details
-                            </span>
-                          </div>
-                        )}
+                        <div className="flex items-center space-x-2">
+                          {!compareMode && (
+                            <>
+                              <span className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded-full">
+                                View Details
+                              </span>
+                              <motion.button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setRunToDelete(run.name);
+                                  setShowDeleteConfirm(true);
+                                }}
+                                className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                whileHover={{ scale: 1.1 }}
+                                whileTap={{ scale: 0.9 }}
+                                title="Delete run"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </motion.button>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </motion.div>
                   ))}
@@ -974,6 +1019,83 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
                   </motion.button>
                 </div>
               </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {showDeleteConfirm && runToDelete && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowDeleteConfirm(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center space-x-3 mb-4">
+                <div className="bg-red-100 p-3 rounded-lg">
+                  <AlertCircle className="h-6 w-6 text-red-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-800">
+                    Delete Evaluation Run
+                  </h3>
+                  <p className="text-sm text-gray-600">
+                    This action cannot be undone.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-gray-50 rounded-lg p-4 mb-6">
+                <p className="text-sm text-gray-700">
+                  Are you sure you want to delete the evaluation run{" "}
+                  <span className="font-medium text-gray-900">
+                    "{runToDelete}"
+                  </span>
+                  ?
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end space-x-3">
+                <motion.button
+                  onClick={() => {
+                    setShowDeleteConfirm(false);
+                    setRunToDelete(null);
+                  }}
+                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                >
+                  Cancel
+                </motion.button>
+                <motion.button
+                  onClick={async () => {
+                    try {
+                      await deleteRun(runToDelete);
+                      setShowDeleteConfirm(false);
+                      setRunToDelete(null);
+                    } catch (err) {
+                      // Error handling is already done in deleteRun function
+                      console.error("Delete failed:", err);
+                    }
+                  }}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center space-x-2"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  <span>Delete</span>
+                </motion.button>
+              </div>
             </motion.div>
           </motion.div>
         )}

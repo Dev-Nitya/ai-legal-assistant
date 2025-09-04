@@ -55,41 +55,147 @@ class LegalHybridRetriever:
         # Rerank documents for better relevance
         docs = self._rerank_documents(docs, query)
 
-        return docs[:k]
+        def _pick_representative_page(pages: List[Document], prefer_section: Optional[str] = None) -> Document:
+            # prefer a page that contains the section token in content
+            if prefer_section:
+                tok = re.sub(r'[^0-9a-z]', '', prefer_section.lower())
+                for p in pages:
+                    if re.search(rf'\bsection\s{re.escape(tok)}\b', (p.page_content or "").lower()):
+                        return p
+                # then prefer a page whose page-level metadata matches
+                for p in pages:
+                    es = p.metadata.get("extracted_sections") or p.metadata.get("extracted_sections_norm") or p.metadata.get("aggregated_extracted_sections_norm") or ""
+                    if isinstance(es, (list, tuple, set)):
+                        meta_list = [str(x).lower() for x in es]
+                    else:
+                        meta_list = [x.strip().lower() for x in re.split(r'\s*(?:,|;|\||/|and)\s*', str(es)) if x.strip()]
+                    if any(re.sub(r'[^0-9a-z]', '', m) == tok for m in meta_list):
+                        return p
+            # fallback to top-ranked page
+            return pages[0]
+
+        # Build representative list preserving rerank order and returning at most one page per source
+        by_file = {}
+        for d in docs:
+            src = d.metadata.get("source_file") or d.metadata.get("source")
+            by_file.setdefault(src, []).append(d)
+
+        picked = []
+        seen = set()
+        preferred_section = None
+        if filters and 'sections' in filters and filters.get('sections'):
+            preferred_section = str(filters['sections'][0])
+
+        for d in docs:
+            src = d.metadata.get("source_file") or d.metadata.get("source")
+            if src in seen:
+                continue
+            pages = by_file.get(src, [])
+            rep = _pick_representative_page(pages, preferred_section)
+            picked.append(rep)
+            seen.add(src)
+            if len(picked) >= k:
+                break
+
+        return picked[:k]
 
     def _apply_filters(
         self,
         docs: List[Document],
         filters: Dict
     ) -> List[Document]:
-        """Apply metadata-based filtering"""
+        """Apply metadata-based filtering.
+        By default all provided filter criteria must match (AND).
+        If filters contains "match_any_filter": True then a document is kept if it matches ANY filter (OR).
+        """
         filtered_docs = []
 
+        def _to_list(v):
+            if v is None:
+                return []
+            if isinstance(v, (list, tuple, set)):
+                return [str(x).strip().lower() for x in v if str(x).strip()]
+            if isinstance(v, str):
+                s = v.strip()
+                if s == "":
+                    return []
+                parts = re.split(r'\s*(?:,|;|\||/|and)\s*', s)
+                return [p.strip().lower() for p in parts if p.strip()]
+            return [str(v).strip().lower()]
+
+        def _normalize_section_tokens(tokens, content: Optional[str] = None):
+            out = []
+            for t in tokens:
+                tok = re.sub(r'[^0-9a-z]', '', str(t).lower())
+                if not tok:
+                    continue
+                if len(tok) >= 2:
+                    out.append(tok)
+                    continue
+                # single-char token: include only when context confirms it's a section
+                if content and re.search(rf'\b(?:section|sec\.?|s\.)\s*{re.escape(tok)}\b', content, re.IGNORECASE):
+                    out.append(tok)
+            return out
+
+        # mode: OR vs AND
+        match_any_mode = bool(filters.get("match_any_filter", False))
+
         for doc in docs:
-            include_doc = True
+            # collect per-filter match results for filters that are present
+            match_results = []
 
-            # Document type filter
+            # document_type (exact match)
             if 'document_type' in filters:
-                if doc.metadata.get('document_type') != filters['document_type']:
-                    include_doc = False
+                match_results.append(doc.metadata.get('document_type') == filters['document_type'])
 
-            # Legal topic filter
+            # legal_topics (any overlap)
             if 'legal_topics' in filters:
-                doc_topics = doc.metadata.get('legal_topics', [])
-                if not any(topic in doc_topics for topic in filters['legal_topics']):
-                    include_doc = False
+                doc_topics = _to_list(doc.metadata.get('legal_topics', []))
+                filter_topics = [str(t).strip().lower() for t in filters.get('legal_topics', [])]
+                match_results.append(bool(set(doc_topics) & set(filter_topics)))
 
-            # Section filter
+            # sections (normalized exact tokens)
             if 'sections' in filters:
-                doc_sections = doc.metadata.get('extracted_sections', [])
-                if not any(section in doc_sections for section in filters['sections']):
-                    include_doc = False
+                # include both page-level and aggregated-per-document section tokens
+                raw_doc_secs_page = doc.metadata.get('extracted_sections_norm') or doc.metadata.get('extracted_sections') or []
+                raw_doc_secs_agg = doc.metadata.get('aggregated_extracted_sections_norm') or []
+                doc_sections = _to_list(raw_doc_secs_page) + _to_list(raw_doc_secs_agg)
+                # dedupe
+                doc_sections = list(dict.fromkeys(doc_sections))
+                doc_sections = _normalize_section_tokens(doc_sections, getattr(doc, "page_content", None))
+                
+                filter_secs = []
+                for s in filters.get('sections', []):
+                    if s is None:
+                        continue
+                    fs = re.sub(r'[^0-9a-z]', '', str(s).lower())
+                    if fs:
+                        filter_secs.append(fs)
+                match_results.append(any(fs == ds for fs in filter_secs for ds in doc_sections) if filter_secs else False)
 
-            # Acts filter
+            # acts (substring / token match)
             if 'acts' in filters:
-                doc_acts = doc.metadata.get('extracted_acts', [])
-                if not any(act in ' '.join(doc_acts) for act in filters['acts']):
-                    include_doc = False
+                 # include both page-level and aggregated-per-document act tokens/names
+                raw_doc_acts_page = doc.metadata.get('extracted_acts_norm') or doc.metadata.get('extracted_acts') or []
+                raw_doc_acts_agg = doc.metadata.get('aggregated_extracted_acts_norm') or []
+                doc_acts_list = _to_list(raw_doc_acts_page) + _to_list(raw_doc_acts_agg)
+                # dedupe while preserving order
+                doc_acts_list = list(dict.fromkeys(doc_acts_list))
+                doc_acts_text = " ".join(doc_acts_list)
+                
+                filter_acts = [str(a).strip().lower() for a in filters.get('acts', []) if a is not None]
+                act_match = False
+                for fa in filter_acts:
+                    if fa in doc_acts_text or any(fa in a for a in doc_acts_list):
+                        act_match = True
+                        break
+                match_results.append(act_match)
+
+            # If no specific filter keys were present, keep doc
+            if not match_results:
+                include_doc = True
+            else:
+                include_doc = any(match_results) if match_any_mode else all(match_results)
 
             if include_doc:
                 filtered_docs.append(doc)
@@ -164,15 +270,23 @@ class QueryProcessor:
 
         # Extract act references
         act_matches = []
+        def _norm_act(s: str) -> str:
+            # lower, replace non-alnum with underscore, collapse multiples, strip underscores
+            t = re.sub(r'[^a-z0-9]+', '_', s.lower())
+            return re.sub(r'_+', '_', t).strip('_')
+        
         act_patterns = {
-            'ipc': 'Indian Penal Code',
-            'crpc': 'Criminal Procedure Code',
-            'constitution': 'Constitution of India',
-            'evidence act': 'Evidence Act'
+            r'\b(?:ipc|indian penal code|penal code|45 of 1860|1860)\b': 'Indian Penal Code, 1860',
+            r'\b(?:crpc|code of criminal procedure|criminal procedure code|1973)\b': 'Code of Criminal Procedure, 1973',
+            r'\b(?:constitution|constitution of india)\b': 'Constitution of India',
+            r'\b(?:evidence act|evidence)\b': 'Evidence Act'
         }
-        for pattern, full_name in act_patterns.items():
-            if pattern in query_lower:
+
+        for pat, full_name in act_patterns.items():
+            if re.search(pat, query_lower):
+                # include both human-readable and normalized token to match either storage style
                 act_matches.append(full_name)
+                act_matches.append(_norm_act(full_name))
 
         # Determine query intent
         intent = 'general'
