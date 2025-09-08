@@ -158,6 +158,7 @@ export interface BatchEvaluationRequest {
   difficulty?: string;
   max_questions: number;
   user_id?: string;
+  question_type: string; // 'easy' or 'hard'
 }
 
 export interface EvaluationResult {
@@ -169,6 +170,15 @@ export interface EvaluationResult {
   retrieved_doc_count: number;
   answer_length_tokens: number;
   evaluation_timestamp: string;
+  // New fields added to backend response
+  recall_at_100?: number;
+  retrieval_latency_global_p50_ms?: number;
+  retrieval_latency_global_p95_ms?: number;
+  precision_at_1?: number;
+  mrr?: number;
+  hallucination_rate?: number;
+  avg_response_time_ms?: number;
+  retrieval_coverage?: number;
 }
 
 export interface EvaluationResponse {
@@ -186,6 +196,10 @@ export interface BatchEvaluationResponse {
   individual_results: EvaluationResponse[];
   category_breakdown: Record<string, Record<string, number>>;
   summary: Record<string, any>;
+  // New fields added for enhanced metrics display
+  metrics?: Record<string, number>;
+  samples?: any[];
+  meta?: Record<string, any>;
 }
 
 // API Error Types

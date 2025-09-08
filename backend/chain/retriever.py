@@ -1,16 +1,23 @@
 from pathlib import Path
 import re
+import unicodedata
 from langchain.retrievers import EnsembleRetriever
 from langchain_community.retrievers import BM25Retriever
 from langchain.schema import Document
 from typing import List, Dict, Optional, Any
+import numpy as np
+from sentence_transformers import SentenceTransformer
 
 from chain.loader import vectorstore
+
+RERANK_MODEL_NAME = "all-MiniLM-L6-v2"
 
 class LegalHybridRetriever:
     def __init__(self, vectorstore, documents: List[Document]):
         self.vectorstore = vectorstore
         self.documents = documents
+        self._reranker_model = None
+        self.reranker_model_name = RERANK_MODEL_NAME
 
         try:
             # Create BM25 retriever for keyword-based search
@@ -138,7 +145,7 @@ class LegalHybridRetriever:
             return out
 
         # mode: OR vs AND
-        match_any_mode = bool(filters.get("match_any_filter", False))
+        match_any_mode = bool(filters.get("match_any_filter", True))
 
         for doc in docs:
             # collect per-filter match results for filters that are present
@@ -257,13 +264,144 @@ class LegalHybridRetriever:
 
         return score
     
+    def hybrid_retrieve(self, query: str, k: int = 50) -> List[Document]:
+        """
+        Hybrid retrieval: combine lexical (BM25) and semantic retrievers, dedupe,
+        then rerank the combined candidate set and return top-k Documents.
+        """
+        candidates = []
+
+        # collect BM25 candidates if available
+        if self.has_bm25 and getattr(self, "bm25_retriever", None):
+            try:
+                bm25_docs = self.bm25_retriever.get_relevant_documents(query)
+            except Exception:
+                print("Warning: BM25 retriever failed during hybrid retrieval.")
+                bm25_docs = []
+        else:
+            bm25_docs = []
+
+        # collect semantic candidates
+        try:
+            sem_docs = self.semantic_retriever.get_relevant_documents(query)
+        except Exception:
+            print("Warning: Semantic retriever failed during hybrid retrieval.")
+            sem_docs = []
+
+        # merge while preserving order: BM25 first then semantic (will be re-ranked)
+        combined = bm25_docs + sem_docs
+
+        # Deduplicate by a stable document key (prefer metadata.source_file / source)
+        seen = set()
+        uniq = []
+        for d in combined:
+            src = d.metadata.get("source_file") or d.metadata.get("source") or getattr(d, "id", None) or (d.page_content[:200] if getattr(d, "page_content", None) else None)
+            key = str(src)
+            if key in seen:
+                continue
+            seen.add(key)
+            uniq.append(d)
+
+        if not uniq:
+            return []
+
+        # Rerank the unique candidates using existing scorer and return top-k
+        try:
+           reranked = self.rerank(uniq, query, top_k=k)
+        except Exception:
+            reranked = self._rerank_documents(uniq, query)
+            
+        return reranked[:k]
+    
+    def _ensure_reranker_loaded(self):
+        """Load the SBERT model on first use (no-op if model unavailable)."""
+        if self._reranker_model is not None:
+            return
+        if SentenceTransformer is None:
+            # model library not available
+            self._reranker_model = None
+            return
+        try:
+            self._reranker_model = SentenceTransformer(self.reranker_model_name)
+        except Exception:
+            self._reranker_model = None
+
+    def rerank(self, candidates: List[Document], query: str, top_k: Optional[int] = None, alpha: float = 0.5) -> List[Document]:
+        """
+        Strong semantic reranker using SBERT:
+         - compute embedding for query and candidate pages
+         - compute cosine similarity
+         - combine SBERT similarity with existing heuristic score:
+             final_score = alpha * semantic_sim + (1-alpha) * normalized_heuristic_score
+         - return candidates sorted by final_score (descending)
+
+        Simple terms: SBERT gives a semantic match score; we mix it with current heuristic
+        score so both content match and domain heuristics matter.
+        """
+        if not candidates:
+            return []
+        
+        self._ensure_reranker_loaded()
+        if self._reranker_model is None:
+            # fallback: no SBERT available — use existing heuristic reranker
+            return self._rerank_documents(candidates, query)
+
+        # build texts to embed (use page content or small snippet)
+        texts = [(getattr(d, "page_content", "") or "")[:1500] for d in candidates]
+
+        try:
+            q_emb = self._reranker_model.encode([query], convert_to_numpy=True)[0]
+            doc_embs = self._reranker_model.encode(texts, convert_to_numpy=True)
+        except Exception:
+            # embedding failed — fallback to existing heuristic reranker
+            return self._rerank_documents(candidates, query)
+        
+        def cosine(a, b):
+            da = np.linalg.norm(a)
+            db = np.linalg.norm(b)
+            if da == 0 or db == 0:
+                return 0.0
+            return float(np.dot(a, b) / (da * db))
+
+        sem_sims = [cosine(q_emb, de) for de in doc_embs]
+
+        heur_scores = [self._calculate_relevance_score(d, query) for d in candidates]
+        min_h, max_h = min(heur_scores), max(heur_scores)
+
+        heur_norm = []
+        if max_h - min_h > 1e-6:
+            heur_norm = [(s - min_h) / (max_h - min_h) for s in heur_scores]
+        else:
+            heur_norm = [0.0 for _ in heur_scores]
+
+        final_scores = []
+        for i, d in enumerate(candidates):
+            sem = sem_sims[i]
+            h = heur_norm[i]
+            final = alpha * sem + (1.0 - alpha) * h
+            final_scores.append((d, final))
+
+        final_scores.sort(key=lambda x: x[1], reverse=True)
+        ranked = [d for d, s in final_scores]
+        if top_k:
+            return ranked[:top_k]
+        return ranked
+
 class QueryProcessor:
     """Preprocess queries to enhance retrieval"""
 
     @staticmethod
     def preprocess_query(query: str) -> Dict[str, Any]:
         """Extract intent and entities from query"""
-        query_lower = query.lower()
+
+         # Defensive normalization: handle None, normalize unicode, replace smart quotes
+        if query is None:
+            query = ""
+        q_norm = unicodedata.normalize("NFKC", str(query))
+        q_norm = q_norm.replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
+        q_norm = " ".join(q_norm.split())
+
+        query_lower = q_norm.lower()
 
         # Extract section references
         section_matches = re.findall(r'section\s+(\d+[a-z]*)', query_lower)
@@ -306,6 +444,14 @@ class QueryProcessor:
         elif any(word in query_lower for word in ['contract', 'property', 'civil']):
             legal_domain = 'civil'
 
+        filters = {
+            'legal_topics': [legal_domain] if legal_domain != 'general' else [],
+            'acts': act_matches,
+            'sections': section_matches
+        }
+        # Remove empty/falsey filter entries so downstream filtering is not overly restrictive.
+        cleaned_filters = {k: v for k, v in filters.items() if v}
+
         return {
             'original_query': query,
             'processed_query': query_lower,
@@ -313,11 +459,7 @@ class QueryProcessor:
             'acts': act_matches,
             'intent': intent,
             'legal_domain': legal_domain,
-            'filters': {
-                'legal_topics': [legal_domain] if legal_domain != 'general' else [],
-                'acts': act_matches,
-                'sections': section_matches
-            }
+            'filters': cleaned_filters
         }
     
 try:

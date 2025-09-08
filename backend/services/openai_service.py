@@ -56,7 +56,7 @@ class OpenAIService:
         # Default settings for API calls
         self.default_model = "gpt-3.5-turbo"  # Cheapest model as default
         self.default_max_tokens = 1000        # Reasonable limit
-        self.default_temperature = 0.7       # Balanced creativity
+        self.default_temperature = 0.0 
         
         # Cost tracking settings
         self.track_costs = True
@@ -115,6 +115,7 @@ class OpenAIService:
                             model: str = None,
                             max_tokens: int = None,
                             temperature: float = None,
+                            top_p: Optional[float] = None,
                             **kwargs) -> Dict[str, Any]:
         """
         Wrapper around the original chat call that uses retries, model downgrade and graceful fallback.
@@ -159,12 +160,15 @@ class OpenAIService:
             
                 start_time = datetime.utcnow()
 
+                effective_top_p = top_p if top_p is not None else 1.0
+
                 # Step 3: Make the actual OpenAI API call
                 openai_response = await self.client.chat.completions.create(
                     model=model_override,
                     messages=messages,
                     max_tokens=max_tokens,
                     temperature=temperature,
+                    top_p=effective_top_p,
                     **kwargs
                 )
                 
@@ -413,7 +417,8 @@ class OpenAIService:
             logger.error(f"Error recording real cost for user {user_id}: {e}")
     
     async def simple_chat(self, question: str, user_id: str, 
-                         model: str = None) -> Dict[str, Any]:
+                         model: str = None, system_message: Optional[str] = None,
+                         top_p: Optional[float] = None) -> Dict[str, Any]:
         """
         Simplified method for basic chat requests.
         
@@ -443,15 +448,19 @@ class OpenAIService:
         """
         
         # Convert simple question to OpenAI message format
-        messages = [
-            {"role": "user", "content": question}
-        ]
+        messages = []
+        
+        if system_message:
+            messages.append({"role": "system", "content": system_message})
+
+        messages.append({"role": "user", "content": question})
         
         # Use the full chat_completion method
         return await self.chat_completion(
             messages=messages,
             user_id=user_id,
-            model=model
+            model=model,
+            top_p=top_p
         )
 
 # Global instance for use across the application

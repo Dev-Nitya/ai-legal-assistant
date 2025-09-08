@@ -20,6 +20,7 @@ class EvalRunAndStore(BaseModel):
     limit: int
     created_by: str | None = None
     user_id: str | None = None
+    question_type: str  # 'easy' or 'hard'
 
 def get_result(eval_response):
     if isinstance(eval_response, JSONResponse):
@@ -62,6 +63,7 @@ async def run_and_store_evaluation(
     name = payload.name
     limit = payload.limit or 100
     created_by = payload.created_by
+    question_type = payload.question_type
 
     if not name:
         raise HTTPException(status_code=400, detail="Missing 'name'")
@@ -73,9 +75,9 @@ async def run_and_store_evaluation(
         from routes.evaluation import evaluate_batch_questions, BatchEvaluationRequest
 
         # Build the request model expected by the route handler.
-        req_model = BatchEvaluationRequest(max_questions=limit)
+        req_model = BatchEvaluationRequest(max_questions=limit, question_type=question_type, user_id=payload.user_id)
         # Call the route handler directly (it's async)
-        eval_response = await evaluate_batch_questions(req_model, user_id=payload.user_id)
+        eval_response = await evaluate_batch_questions(req_model)
 
         eval_result = get_result(eval_response)
             
@@ -86,7 +88,7 @@ async def run_and_store_evaluation(
             async with httpx.AsyncClient(timeout=60) as client:
                 resp = await client.post(
                     f"{backend_url}/api/evaluate/batch",
-                    json={"max_questions": limit},
+                    json={"max_questions": limit, "question_type": question_type},
                 )
                 resp.raise_for_status()
                 eval_result = resp.json()

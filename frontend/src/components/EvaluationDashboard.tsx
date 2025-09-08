@@ -15,6 +15,9 @@ import {
   FiX as X,
   FiTrash2 as Trash2,
   FiPlay as Play,
+  FiTarget as Target,
+  FiActivity as Activity,
+  FiAward as Award,
 } from "react-icons/fi";
 
 interface EvalRun {
@@ -68,6 +71,7 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
     name: "",
     limit: 100,
     created_by: "",
+    question_type: "easy",
   });
   const [isRunning, setIsRunning] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -136,7 +140,8 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
   const runAndStoreEvaluation = async (
     name: string,
     limit: number,
-    created_by?: string
+    created_by?: string,
+    question_type: string = "easy"
   ) => {
     setIsRunning(true);
     setError(null);
@@ -161,7 +166,13 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
             Accept: "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          body: JSON.stringify({ name, limit, created_by, user_id }),
+          body: JSON.stringify({
+            name,
+            limit,
+            created_by,
+            user_id,
+            question_type,
+          }),
         }
       );
 
@@ -172,7 +183,12 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
       await fetchRuns();
 
       // Reset form and close modal
-      setRunForm({ name: "", limit: 100, created_by: "" });
+      setRunForm({
+        name: "",
+        limit: 100,
+        created_by: "",
+        question_type: "easy",
+      });
       setShowRunForm(false);
 
       return data;
@@ -228,16 +244,31 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
       return String(value);
     }
 
+    // Format latency metrics (including the new p50 and p95 fields)
     if (key.includes("time") || key.includes("latency")) {
       return `${value.toFixed(2)}ms`;
     }
+
+    // Format percentage-based metrics
     if (
       key.includes("score") ||
       key.includes("accuracy") ||
-      key.includes("precision")
+      key.includes("precision") ||
+      key.includes("recall") ||
+      key.includes("relevance") ||
+      key.includes("faithfulness") ||
+      key.includes("rate") ||
+      key.includes("coverage") ||
+      key.includes("mrr")
     ) {
       return `${(value * 100).toFixed(1)}%`;
     }
+
+    // Format count-based metrics
+    if (key.includes("count") || key === "p_at_1") {
+      return value.toFixed(0);
+    }
+
     return value.toFixed(3);
   };
 
@@ -247,6 +278,7 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
       return "text-gray-600";
     }
 
+    // Handle latency metrics (lower is better)
     if (key.includes("time") || key.includes("latency")) {
       return value < 1000
         ? "text-green-600"
@@ -254,11 +286,144 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
         ? "text-yellow-600"
         : "text-red-600";
     }
-    return value > 0.8
-      ? "text-green-600"
-      : value > 0.6
-      ? "text-yellow-600"
-      : "text-red-600";
+
+    // Handle hallucination rate (lower is better)
+    if (key.includes("hallucination_rate")) {
+      return value < 0.1
+        ? "text-green-600"
+        : value < 0.3
+        ? "text-yellow-600"
+        : "text-red-600";
+    }
+
+    // Handle most quality metrics (higher is better)
+    if (
+      key.includes("score") ||
+      key.includes("precision") ||
+      key.includes("recall") ||
+      key.includes("relevance") ||
+      key.includes("faithfulness") ||
+      key.includes("coverage") ||
+      key.includes("mrr") ||
+      key.includes("p_at_1")
+    ) {
+      return value > 0.8
+        ? "text-green-600"
+        : value > 0.6
+        ? "text-yellow-600"
+        : "text-red-600";
+    }
+
+    return "text-gray-600";
+  };
+
+  const getMetricDisplayName = (key: string) => {
+    const displayNames: Record<string, string> = {
+      precision_at_3: "Precision @ 3",
+      precision_at_5: "Precision @ 5",
+      mrr: "Mean Reciprocal Rank",
+      p_at_1: "Precision @ 1",
+      recall_at_100: "Recall @ 100",
+      answer_relevance: "Answer Relevance",
+      answer_faithfulness: "Answer Faithfulness",
+      overall_score: "Overall Score",
+      hallucination_rate: "Hallucination Rate",
+      avg_response_time_ms: "Avg Response Time",
+      retrieval_coverage: "Retrieval Coverage",
+      retrieval_latency_global_p50_ms: "Retrieval Latency P50",
+      retrieval_latency_global_p95_ms: "Retrieval Latency P95",
+    };
+
+    return (
+      displayNames[key] ||
+      key.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase())
+    );
+  };
+
+  const getMetricDescription = (key: string) => {
+    const descriptions: Record<string, string> = {
+      recall_at_100:
+        "Percentage of relevant documents found in top 100 results",
+      retrieval_latency_global_p50_ms:
+        "50th percentile of retrieval response times",
+      retrieval_latency_global_p95_ms:
+        "95th percentile of retrieval response times",
+      precision_at_3: "Percentage of relevant documents in top 3 results",
+      precision_at_5: "Percentage of relevant documents in top 5 results",
+      mrr: "Mean reciprocal rank of first relevant document",
+      p_at_1: "Precision at rank 1 (top result relevance)",
+      answer_relevance: "How well the answer addresses the question",
+      answer_faithfulness: "How faithful the answer is to source documents",
+      overall_score: "Combined quality score across all metrics",
+      hallucination_rate: "Percentage of answers with low faithfulness",
+      avg_response_time_ms: "Average total response time",
+      retrieval_coverage: "Percentage of queries that found relevant documents",
+    };
+
+    return descriptions[key] || "";
+  };
+
+  const getMetricIcon = (key: string) => {
+    if (
+      key.includes("precision") ||
+      key.includes("recall") ||
+      key.includes("mrr") ||
+      key === "p_at_1"
+    ) {
+      return Target;
+    }
+    if (
+      key.includes("relevance") ||
+      key.includes("faithfulness") ||
+      key.includes("score")
+    ) {
+      return Award;
+    }
+    if (key.includes("time") || key.includes("latency")) {
+      return Clock;
+    }
+    if (key.includes("rate") || key.includes("coverage")) {
+      return Activity;
+    }
+    return TrendingUp;
+  };
+
+  const categorizeMetrics = (metrics: Record<string, number>) => {
+    const categories = {
+      "Retrieval Metrics": {} as Record<string, number>,
+      "Answer Quality": {} as Record<string, number>,
+      Performance: {} as Record<string, number>,
+      Overall: {} as Record<string, number>,
+    };
+
+    Object.entries(metrics).forEach(([key, value]) => {
+      if (
+        key.includes("precision") ||
+        key.includes("recall") ||
+        key.includes("mrr") ||
+        key.includes("coverage") ||
+        key === "p_at_1"
+      ) {
+        categories["Retrieval Metrics"][key] = value;
+      } else if (
+        key.includes("relevance") ||
+        key.includes("faithfulness") ||
+        key.includes("hallucination")
+      ) {
+        categories["Answer Quality"][key] = value;
+      } else if (key.includes("time") || key.includes("latency")) {
+        categories["Performance"][key] = value;
+      } else {
+        categories["Overall"][key] = value;
+      }
+    });
+
+    // Remove empty categories
+    return Object.fromEntries(
+      Object.entries(categories).filter(
+        ([_, metrics]) => Object.keys(metrics).length > 0
+      )
+    );
   };
 
   const handleRunSelection = (runName: string) => {
@@ -574,32 +739,47 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
             </div>
 
             {/* Metrics Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {Object.entries(selectedRun.metrics).map(([key, value]) => (
-                <motion.div
-                  key={key}
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="bg-white/90 backdrop-blur-xl rounded-xl shadow-lg border border-white/30 p-4"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-sm font-medium text-gray-600 capitalize">
-                      {key.replace(/_/g, " ")}
-                    </h4>
-                    <TrendingUp
-                      className={`h-4 w-4 ${getMetricColor(value, key)}`}
-                    />
+            <div className="space-y-6">
+              {Object.entries(categorizeMetrics(selectedRun.metrics)).map(
+                ([category, metrics]) => (
+                  <div key={category} className="space-y-4">
+                    <h3 className="text-lg font-semibold text-gray-800 border-b border-gray-200 pb-2">
+                      {category}
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {Object.entries(metrics).map(([key, value]) => (
+                        <motion.div
+                          key={key}
+                          initial={{ opacity: 0, scale: 0.95 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          className="bg-white/90 backdrop-blur-xl rounded-xl shadow-lg border border-white/30 p-4"
+                          title={getMetricDescription(key)}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="text-sm font-medium text-gray-600">
+                              {getMetricDisplayName(key)}
+                            </h4>
+                            {React.createElement(getMetricIcon(key), {
+                              className: `h-4 w-4 ${getMetricColor(
+                                value,
+                                key
+                              )}`,
+                            })}
+                          </div>
+                          <p
+                            className={`text-2xl font-bold ${getMetricColor(
+                              value,
+                              key
+                            )}`}
+                          >
+                            {formatMetricValue(value, key)}
+                          </p>
+                        </motion.div>
+                      ))}
+                    </div>
                   </div>
-                  <p
-                    className={`text-2xl font-bold ${getMetricColor(
-                      value,
-                      key
-                    )}`}
-                  >
-                    {formatMetricValue(value, key)}
-                  </p>
-                </motion.div>
-              ))}
+                )
+              )}
             </div>
 
             {/* Samples */}
@@ -665,8 +845,8 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
                   className="bg-white/90 backdrop-blur-xl rounded-xl shadow-lg border border-white/30 p-6"
                 >
                   <div className="flex items-center justify-between mb-4">
-                    <h4 className="text-lg font-medium text-gray-800 capitalize">
-                      {metric.replace(/_/g, " ")}
+                    <h4 className="text-lg font-medium text-gray-800">
+                      {getMetricDisplayName(metric)}
                     </h4>
                     <div className="flex items-center space-x-2">
                       {data.delta > 0 ? (
@@ -773,7 +953,8 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
                     await runAndStoreEvaluation(
                       runForm.name,
                       runForm.limit,
-                      runForm.created_by || undefined
+                      runForm.created_by || undefined,
+                      runForm.question_type
                     );
                     setActiveView("overview");
                   } catch (err) {
@@ -782,7 +963,26 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
                 }}
                 className="space-y-6"
               >
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Question Type *
+                    </label>
+                    <select
+                      value={runForm.question_type}
+                      onChange={(e) =>
+                        setRunForm((prev) => ({
+                          ...prev,
+                          question_type: e.target.value,
+                        }))
+                      }
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    >
+                      <option value="easy">Easy Questions</option>
+                      <option value="hard">Hard Questions</option>
+                    </select>
+                  </div>
+
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Evaluation Name *
@@ -853,6 +1053,7 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
                           name: "",
                           limit: 100,
                           created_by: "",
+                          question_type: "easy",
                         });
                         setActiveView("overview");
                       }}
@@ -927,7 +1128,8 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
                     await runAndStoreEvaluation(
                       runForm.name,
                       runForm.limit,
-                      runForm.created_by || undefined
+                      runForm.created_by || undefined,
+                      runForm.question_type
                     );
                   } catch (err) {
                     // Error is already set by runAndStoreEvaluation

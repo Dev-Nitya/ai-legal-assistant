@@ -134,6 +134,7 @@ export interface BatchEvaluationRequest {
   difficulty?: string;
   max_questions: number;
   user_id?: string;
+  question_type: string; // 'easy' or 'hard'
 }
 
 export interface EvaluationResult {

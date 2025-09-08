@@ -7,7 +7,6 @@ import {
   FiClock as Clock,
   FiCheckCircle as CheckCircle,
   FiAlertCircle as AlertCircle,
-  FiDownload as Download,
   FiLoader as Loader2,
   FiFileText as FileText,
   FiTrendingUp as TrendingUp,
@@ -47,6 +46,7 @@ const EvaluationInterface: React.FC<EvaluationInterfaceProps> = ({
     difficulty: "",
     max_questions: 5,
     user_id: user?.user_id || "anonymous",
+    question_type: "easy", // Default to 'easy'
   });
 
   const API_BASE_URL = "http://localhost:8000/api";
@@ -136,14 +136,56 @@ const EvaluationInterface: React.FC<EvaluationInterfaceProps> = ({
     }
   };
 
-  const formatScore = (score: number) => {
+  const formatScore = (score: number, key?: string) => {
+    if (key && (key.includes("time") || key.includes("latency"))) {
+      return `${score.toFixed(2)}ms`;
+    }
+    if (key && (key.includes("count") || key === "p_at_1")) {
+      return score.toFixed(0);
+    }
     return (score * 100).toFixed(1) + "%";
   };
 
-  const getScoreColor = (score: number) => {
+  const getScoreColor = (score: number, key?: string) => {
+    // Handle latency metrics (lower is better)
+    if (key && (key.includes("time") || key.includes("latency"))) {
+      if (score < 1000) return "text-green-600";
+      if (score < 3000) return "text-yellow-600";
+      return "text-red-600";
+    }
+    // Handle hallucination rate (lower is better)
+    if (key && key.includes("hallucination_rate")) {
+      if (score < 0.1) return "text-green-600";
+      if (score < 0.3) return "text-yellow-600";
+      return "text-red-600";
+    }
+    // Default (higher is better)
     if (score >= 0.8) return "text-green-600";
     if (score >= 0.6) return "text-yellow-600";
     return "text-red-600";
+  };
+
+  const getMetricDisplayName = (key: string) => {
+    const displayNames: Record<string, string> = {
+      precision_at_3: "Precision @ 3",
+      precision_at_5: "Precision @ 5",
+      mrr: "Mean Reciprocal Rank",
+      p_at_1: "Precision @ 1",
+      recall_at_100: "Recall @ 100",
+      answer_relevance: "Answer Relevance",
+      answer_faithfulness: "Answer Faithfulness",
+      overall_score: "Overall Score",
+      hallucination_rate: "Hallucination Rate",
+      avg_response_time_ms: "Avg Response Time",
+      retrieval_coverage: "Retrieval Coverage",
+      retrieval_latency_global_p50_ms: "Retrieval Latency P50",
+      retrieval_latency_global_p95_ms: "Retrieval Latency P95",
+    };
+
+    return (
+      displayNames[key] ||
+      key.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase())
+    );
   };
 
   return (
@@ -281,7 +323,26 @@ const EvaluationInterface: React.FC<EvaluationInterfaceProps> = ({
       {/* Batch Evaluation Tab */}
       {activeTab === "batch" && (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Question Type
+              </label>
+              <select
+                value={batchConfig.question_type}
+                onChange={(e) =>
+                  setBatchConfig((prev) => ({
+                    ...prev,
+                    question_type: e.target.value,
+                  }))
+                }
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              >
+                <option value="easy">Easy Questions</option>
+                <option value="hard">Hard Questions</option>
+              </select>
+            </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Category Filter
@@ -409,16 +470,19 @@ const EvaluationInterface: React.FC<EvaluationInterfaceProps> = ({
                     >
                       <div className="flex items-center space-x-2 mb-2">
                         <TrendingUp className="h-4 w-4 text-primary-500" />
-                        <span className="text-sm font-medium text-gray-600 capitalize">
-                          {key.replace(/_/g, " ")}
+                        <span className="text-sm font-medium text-gray-600">
+                          {getMetricDisplayName(key)}
                         </span>
                       </div>
                       <p
                         className={`text-lg font-bold ${getScoreColor(
-                          typeof value === "number" ? value : 0
+                          typeof value === "number" ? value : 0,
+                          key
                         )}`}
                       >
-                        {typeof value === "number" ? formatScore(value) : value}
+                        {typeof value === "number"
+                          ? formatScore(value, key)
+                          : value}
                       </p>
                     </div>
                   )
@@ -468,7 +532,10 @@ const EvaluationInterface: React.FC<EvaluationInterfaceProps> = ({
                         Average Score
                       </p>
                       <p className="text-2xl font-bold text-primary-600">
-                        {formatScore(results.average_scores.overall_score || 0)}
+                        {formatScore(
+                          results.average_scores.overall_score || 0,
+                          "overall_score"
+                        )}
                       </p>
                     </div>
                     <TrendingUp className="h-8 w-8 text-primary-500" />
@@ -498,15 +565,16 @@ const EvaluationInterface: React.FC<EvaluationInterfaceProps> = ({
                   {Object.entries(results.average_scores).map(
                     ([metric, score]) => (
                       <div key={metric} className="text-center">
-                        <p className="text-sm text-gray-600 capitalize mb-1">
-                          {metric.replace(/_/g, " ")}
+                        <p className="text-sm text-gray-600 mb-1">
+                          {getMetricDisplayName(metric)}
                         </p>
                         <p
                           className={`text-lg font-bold ${getScoreColor(
-                            score
+                            score,
+                            metric
                           )}`}
                         >
-                          {formatScore(score)}
+                          {formatScore(score, metric)}
                         </p>
                       </div>
                     )
@@ -534,10 +602,12 @@ const EvaluationInterface: React.FC<EvaluationInterfaceProps> = ({
                               <span
                                 key={metric}
                                 className={`font-medium ${getScoreColor(
-                                  score
+                                  score,
+                                  metric
                                 )}`}
                               >
-                                {metric}: {formatScore(score)}
+                                {getMetricDisplayName(metric)}:{" "}
+                                {formatScore(score, metric)}
                               </span>
                             ))}
                           </div>
