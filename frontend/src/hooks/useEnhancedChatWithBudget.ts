@@ -5,6 +5,7 @@ import type { EnhancedChatRequest, Message } from '../types';
 interface UseEnhancedChatWithBudgetProps {
   onMessage: (message: Message) => void;
   onError: (error: string) => void;
+  onStreamingStart?: () => void;
   autoRefreshBudget?: boolean; // Whether to automatically refresh budget on successful chat
 }
 
@@ -33,6 +34,7 @@ interface UseEnhancedChatWithBudgetReturn {
 export const useEnhancedChatWithBudget = ({
   onMessage,
   onError,
+  onStreamingStart,
   autoRefreshBudget = true,
 }: UseEnhancedChatWithBudgetProps): UseEnhancedChatWithBudgetReturn => {
   const { refreshBudgetSilently } = useBudgetRefresh();
@@ -42,8 +44,13 @@ export const useEnhancedChatWithBudget = ({
     // Call the original onMessage callback
     onMessage(message);
 
-    // Refresh budget silently after successful message
-    if (autoRefreshBudget) {
+    // Only refresh budget for complete messages (not streaming updates)
+    // and only for assistant messages (not user messages)
+    if (
+      autoRefreshBudget && 
+      message.sender === 'assistant' && 
+      !message.isStreaming
+    ) {
       try {
         await refreshBudgetSilently();
       } catch (error) {
@@ -57,6 +64,7 @@ export const useEnhancedChatWithBudget = ({
   const enhancedChat = useEnhancedChat({
     onMessage: handleMessageWithBudgetRefresh,
     onError,
+    onStreamingStart,
   });
 
   // Expose the budget refresh function for manual calls

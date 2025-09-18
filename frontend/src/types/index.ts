@@ -55,6 +55,7 @@ export interface Message {
   sources?: SourceDocument[];
   confidence?: number;
   isError?: boolean;
+  isStreaming?: boolean;
   tools_used?: string[];
   citations?: Citation[];
   response_time_ms?: number;
@@ -213,6 +214,53 @@ export interface APIError {
 export interface ValidationErrorResponse {
   error_message: string;
   details: Record<string, any>;
+}
+
+// Latency Metrics Types
+export interface LatencyStats {
+  count: number;
+  min_ms: number;
+  max_ms: number;
+  median_ms: number;
+  mean_ms: number;
+  p95_ms: number;
+  p99_ms: number;
+}
+
+export interface LatencyStatsResponse {
+  success: boolean;
+  message: string;
+  endpoint: string;
+  user_id?: string;
+  stats: LatencyStats;
+  source: 'memory' | 'database';
+}
+
+export interface EndpointSummaryResponse {
+  success: boolean;
+  message: string;
+  endpoints: Record<string, LatencyStats>;
+  source: 'memory' | 'database';
+}
+
+export interface LatencyMeasurement {
+  id: number;
+  endpoint: string;
+  user_id?: string;
+  latency_ms: number;
+  timestamp: number;
+  request_id?: string;
+  measurement_type: 'individual' | 'aggregated';
+  metadata?: Record<string, any>;
+}
+
+export interface LatencyMeasurementsResponse {
+  success: boolean;
+  message: string;
+  endpoint: string;
+  user_id?: string;
+  measurements: LatencyMeasurement[];
+  count: number;
 }
 
 // UI State Types

@@ -73,6 +73,23 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
                 dangerouslySetInnerHTML={{ __html: message.content || "" }}
               />
             )}
+
+            {/* Streaming indicator */}
+            {message.isStreaming && !isUser && (
+              <div className="inline-flex items-center ml-2 mt-1">
+                <div className="flex space-x-1">
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                  <div
+                    className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"
+                    style={{ animationDelay: "0.2s" }}
+                  ></div>
+                  <div
+                    className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"
+                    style={{ animationDelay: "0.4s" }}
+                  ></div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Message Metadata */}

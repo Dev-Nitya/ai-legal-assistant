@@ -172,7 +172,7 @@ class EnhancedChatResponse(BaseResponseModel):
         default_factory=list,
         description="Legal tools used in generating the response"
     )
-    citations: List[str] = Field(
+    citations: List[Dict[str, Any]] = Field(
         default_factory=list,
         description="Formatted citations for legal sources"
     )

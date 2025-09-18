@@ -61,6 +61,7 @@ class DatabaseManager:
             # Import models so SQLAlchemy knows about them
             from models.user import User, UserSession, UserBudget
             from models.eval_run import EvalRun
+            from models.latency_metric import LatencyMetric
             
             logger.info("🔧 Creating database tables if not exist...")
             # Create all tables

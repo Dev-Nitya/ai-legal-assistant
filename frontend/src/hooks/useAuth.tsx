@@ -37,15 +37,17 @@ interface AuthProviderProps {
 
 export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [user, setUser] = useState<User | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     // Check for stored auth token
-    const token = localStorage.getItem("auth_token");
+    const savedToken = localStorage.getItem("auth_token");
     const userData = localStorage.getItem("user_data");
 
-    if (token && userData) {
+    if (savedToken && userData) {
       try {
+        setToken(savedToken);
         setUser(JSON.parse(userData));
       } catch (error) {
         console.error("Error parsing stored user data:", error);
@@ -76,6 +78,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
       localStorage.setItem("auth_token", data.access_token);
       localStorage.setItem("user_data", JSON.stringify(data.user));
+      setToken(data.access_token);
       setUser(data.user);
     } catch (error) {
       console.error("Login error:", error);
@@ -102,6 +105,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
       localStorage.setItem("auth_token", data.access_token);
       localStorage.setItem("user_data", JSON.stringify(data.user));
+      setToken(data.access_token);
       setUser(data.user);
     } catch (error) {
       console.error("Registration error:", error);
@@ -112,11 +116,11 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const logout = () => {
     localStorage.removeItem("auth_token");
     localStorage.removeItem("user_data");
+    setToken(null);
     setUser(null);
   };
 
   const refreshProfile = async (): Promise<void> => {
-    const token = localStorage.getItem("auth_token");
     if (!token) {
       throw new Error("No authentication token found");
     }
@@ -151,7 +155,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     logout,
     loading,
     isLoading: loading, // Alias for compatibility
-    token: localStorage.getItem("auth_token"),
+    token,
     refreshProfile,
   };
 

@@ -33,6 +33,7 @@ class DocumentType(str, Enum):
     LEGAL_BRIEF = "legal_brief"
     COURT_FILING = "court_filing"
     LEGAL_MEMO = "legal_memo"
+    LEGAL_DOCUMENT = "legal_document"
     OTHER = "other"
 
 class BaseRequestModel(BaseModel):

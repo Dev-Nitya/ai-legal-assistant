@@ -72,7 +72,7 @@ class BudgetLimits:
 BUDGET_TIERS: Dict[UserTier, BudgetLimits] = {
     UserTier.FREE: BudgetLimits(
         hourly_usd=1.0,    # $1/hour - prevents abuse
-        daily_usd=0.002,     # $5/day - ~150 GPT-3.5 requests
+        daily_usd=5.0,     # $5/day - ~150 GPT-3.5 requests
         weekly_usd=20.0,   # $20/week
         monthly_usd=50.0   # $50/month
     ),

@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   FiSend as Send,
-  FiFileText as FileText,
   FiAward as Scale,
   FiMessageSquare as MessageSquare,
   FiChevronDown as ChevronDown,
@@ -13,15 +12,19 @@ import {
   FiUser as User,
   FiLogIn as LogIn,
   FiX as X,
+  FiDatabase as Database,
 } from "react-icons/fi";
 import ChatMessage from "./components/ChatMessage";
-import SourceDocument from "./components/SourceDocument";
 import LoginForm from "./components/LoginForm";
 import UserDashboard from "./components/UserDashboard";
 import AdvancedChatSettings from "./components/AdvancedChatSettings";
 import EvaluationInterface from "./components/EvaluationInterface";
 import EvaluationDashboard from "./components/EvaluationDashboard";
 import RerankWeightsControl from "./components/RerankWeightsControl";
+import { LatencyDashboard } from "./components/LatencyDashboard";
+import { LatencyWidget } from "./components/LatencyWidget";
+import CacheManagement from "./components/CacheManagement";
+import { StreamingChat } from "./components/StreamingChat";
 import { useEnhancedChatWithBudget } from "./hooks/useEnhancedChatWithBudget";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { ToastProvider } from "./components/Toast";
@@ -34,7 +37,13 @@ const MainApp: React.FC = () => {
   const [inputValue, setInputValue] = useState("");
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [activeView, setActiveView] = useState<
-    "chat" | "evaluation" | "dashboard" | "settings"
+    | "chat"
+    | "streaming"
+    | "evaluation"
+    | "dashboard"
+    | "settings"
+    | "latency"
+    | "cache"
   >("chat");
   const [showLogin, setShowLogin] = useState(false);
   const [showUserDashboard, setShowUserDashboard] = useState(false);
@@ -50,7 +59,30 @@ const MainApp: React.FC = () => {
   // Use enhanced chat with automatic budget refresh
   const { sendMessage, isLoading, error } = useEnhancedChatWithBudget({
     onMessage: (message) => {
-      setMessages((prev) => [...prev, message]);
+      setMessages((prev) => {
+        // If this is a streaming message, update existing message with same ID
+        if (message.isStreaming) {
+          const existingIndex = prev.findIndex((m) => m.id === message.id);
+          if (existingIndex !== -1) {
+            // Update existing message
+            const newMessages = [...prev];
+            newMessages[existingIndex] = message;
+            return newMessages;
+          }
+        }
+
+        // For new messages or final messages, handle appropriately
+        const existingIndex = prev.findIndex((m) => m.id === message.id);
+        if (existingIndex !== -1) {
+          // Replace existing message (final version)
+          const newMessages = [...prev];
+          newMessages[existingIndex] = message;
+          return newMessages;
+        } else {
+          // Add new message
+          return [...prev, message];
+        }
+      });
     },
     onError: (_errorMsg) => {
       const errorMessage: Message = {
@@ -128,13 +160,6 @@ const MainApp: React.FC = () => {
     "How does the appeal process work?",
   ];
 
-  // Get latest assistant message with sources
-  const latestAssistantMessage = messages
-    .filter(
-      (m) => m.sender === "assistant" && m.sources && m.sources.length > 0
-    )
-    .slice(-1)[0];
-
   if (authLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-50 via-gray-100 to-gray-200 flex items-center justify-center">
@@ -186,6 +211,7 @@ const MainApp: React.FC = () => {
                   }`}
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
+                  title="Standard Chat"
                 >
                   <MessageSquare className="h-5 w-5" />
                 </motion.button>
@@ -224,6 +250,19 @@ const MainApp: React.FC = () => {
                   whileTap={{ scale: 0.95 }}
                 >
                   <Settings className="h-5 w-5" />
+                </motion.button>
+                <motion.button
+                  onClick={() => setActiveView("cache")}
+                  className={`p-2 rounded-lg transition-all duration-200 ${
+                    activeView === "cache"
+                      ? "bg-primary-500 text-white shadow-md"
+                      : "text-gray-600 hover:text-gray-800 hover:bg-white/50"
+                  }`}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  title="Cache Management"
+                >
+                  <Database className="h-5 w-5" />
                 </motion.button>
               </div>
 
@@ -304,21 +343,29 @@ const MainApp: React.FC = () => {
       </header>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex overflow-hidden max-w-7xl mx-auto w-full px-8 py-6 space-x-6">
+      <div
+        className={`flex-1 flex overflow-hidden ${
+          activeView === "chat"
+            ? "w-full"
+            : "max-w-7xl mx-auto w-full px-8 py-6 space-x-6"
+        }`}
+      >
         {/* Main Content */}
-        <div className="flex-1 flex flex-col min-h-0">
+        <div
+          className={`flex-1 flex flex-col min-h-0 ${
+            activeView === "chat" ? "h-full" : ""
+          }`}
+        >
           {activeView === "chat" && (
             <div
-              className="flex-1 flex flex-col card-premium overflow-hidden min-h-0"
-              style={{ position: "relative" }}
+              className="flex-1 flex flex-col overflow-hidden min-h-0 bg-gradient-to-br from-gray-50/80 via-white/60 to-gray-100/80 backdrop-blur-xl"
+              style={{ position: "relative", height: "calc(100vh - 140px)" }}
             >
               {/* Messages Container */}
               <div
                 ref={messagesContainerRef}
-                className="flex-1 overflow-y-auto scrollbar-elegant p-8 space-y-6 min-h-0"
+                className="flex-1 overflow-y-auto scrollbar-elegant px-8 py-6 space-y-6 min-h-0"
                 style={{
-                  maxHeight: "60vh",
-                  minHeight: "400px",
                   overflowY: "auto",
                   pointerEvents: "auto",
                   position: "relative",
@@ -331,7 +378,7 @@ const MainApp: React.FC = () => {
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -20 }}
                       className="flex flex-col items-center justify-center text-center py-20"
-                      style={{ minHeight: "70vh" }}
+                      style={{ minHeight: "60vh" }}
                     >
                       <motion.div
                         className="relative mb-8"
@@ -387,20 +434,22 @@ const MainApp: React.FC = () => {
                       </motion.div>
                     </motion.div>
                   ) : (
-                    messages.map((message, index) => (
-                      <motion.div
-                        key={message.id}
-                        initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        transition={{
-                          duration: 0.4,
-                          delay: index * 0.1,
-                          ease: "easeOut",
-                        }}
-                      >
-                        <ChatMessage message={message} />
-                      </motion.div>
-                    ))
+                    <div className="max-w-4xl mx-auto space-y-6">
+                      {messages.map((message, index) => (
+                        <motion.div
+                          key={message.id}
+                          initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          transition={{
+                            duration: 0.4,
+                            delay: index * 0.1,
+                            ease: "easeOut",
+                          }}
+                        >
+                          <ChatMessage message={message} />
+                        </motion.div>
+                      ))}
+                    </div>
                   )}
                 </AnimatePresence>
 
@@ -408,7 +457,7 @@ const MainApp: React.FC = () => {
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="flex items-start space-x-4 max-w-3xl"
+                    className="flex items-start space-x-4 max-w-4xl mx-auto"
                   >
                     <div className="bg-gradient-to-r from-gray-600 via-gray-700 to-gray-800 p-3 rounded-full shadow-xl avatar-assistant">
                       <Scale className="h-5 w-5 text-white" />
@@ -440,10 +489,19 @@ const MainApp: React.FC = () => {
               </div>
 
               {/* Enhanced Input Form */}
-              <div className="border-t border-white/20 bg-white/40 backdrop-blur-xl p-8">
+              <div className="border-t border-white/20 bg-white/60 backdrop-blur-xl px-8 py-6 space-y-4">
+                {/* Latency Widget */}
+                <div className="flex justify-center">
+                  <LatencyWidget
+                    endpoint="enhanced-chat-stream"
+                    userId={user?.user_id}
+                    className="mb-2"
+                  />
+                </div>
+
                 <form
                   onSubmit={handleSubmit}
-                  className="flex space-x-4 items-end max-w-6xl mx-auto"
+                  className="flex space-x-4 items-end max-w-4xl mx-auto"
                 >
                   <div className="flex-1 relative">
                     <motion.input
@@ -488,7 +546,7 @@ const MainApp: React.FC = () => {
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="mt-4 p-4 bg-red-50/80 backdrop-blur-md border border-red-200/60 rounded-xl text-red-700 text-sm font-medium max-w-6xl mx-auto"
+                    className="mt-4 p-4 bg-red-50/80 backdrop-blur-md border border-red-200/60 rounded-xl text-red-700 text-sm font-medium max-w-4xl mx-auto"
                   >
                     {error}
                   </motion.div>
@@ -496,18 +554,23 @@ const MainApp: React.FC = () => {
               </div>
             </div>
           )}
-
+          {activeView === "streaming" && (
+            <StreamingChat
+              className="flex-1"
+              userId={user?.user_id || "anonymous"}
+            />
+          )}
           {activeView === "evaluation" && (
             <EvaluationInterface
               token={token || undefined}
               user={user || undefined}
             />
           )}
-
           {activeView === "dashboard" && (
             <EvaluationDashboard token={token || undefined} />
           )}
-
+          {activeView === "latency" && <LatencyDashboard />}
+          {activeView === "cache" && <CacheManagement />}
           {activeView === "settings" && (
             <div className="space-y-6">
               <AdvancedChatSettings
@@ -530,29 +593,27 @@ const MainApp: React.FC = () => {
           )}
         </div>
 
-        {/* Sidebar */}
-        <div className="w-80 space-y-6">
-          {/* User Dashboard */}
-          {isAuthenticated && showUserDashboard && <UserDashboard />}
+        {/* Sidebar - Only show for non-chat views */}
+        {activeView !== "chat" && (
+          <div className="w-80 space-y-6">
+            {/* User Dashboard */}
+            {isAuthenticated && showUserDashboard && <UserDashboard />}
+          </div>
+        )}
 
-          {/* Source Documents */}
-          {latestAssistantMessage && activeView === "chat" && (
+        {/* User Dashboard for chat view - positioned absolutely */}
+        <AnimatePresence>
+          {activeView === "chat" && isAuthenticated && showUserDashboard && (
             <motion.div
-              initial={{ opacity: 0, x: 30 }}
+              initial={{ opacity: 0, x: 300 }}
               animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.4, duration: 0.6 }}
-              className="bg-white/80 backdrop-blur-xl rounded-2xl shadow-xl border border-white/30 p-6"
+              exit={{ opacity: 0, x: 300 }}
+              className="fixed top-24 right-6 w-80 z-50"
             >
-              <div className="flex items-center space-x-3 mb-6">
-                <FileText className="h-6 w-6 text-primary-600" />
-                <h3 className="text-xl font-bold text-gray-800">
-                  Referenced Sources
-                </h3>
-              </div>
-              <SourceDocument sources={latestAssistantMessage.sources || []} />
+              <UserDashboard />
             </motion.div>
           )}
-        </div>
+        </AnimatePresence>
       </div>
 
       {/* Login Modal */}

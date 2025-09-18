@@ -22,10 +22,14 @@ from routes.evaluation import router as evaluation_router
 from routes.auth import router as auth_router
 from routes.rerank_weights import router as rerank_weights_router
 from routes.eval_dashboard import router as eval_dashboard
+from routes.latency_metrics import router as latency_metrics_router
+from routes.cache_management import router as cache_management_router
+
 from config.settings import settings
 from config.database import get_db, db_manager
-from middleware.rate_limit_middleware import RateLimitMiddleware
+# from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.cost_monitoring_middleware import CostMonitoringMiddleware
+from middleware.latency_tracking_middleware import LatencyTrackingMiddleware
 
 os.environ["OPENAI_API_KEY"] = settings.openai_api_key
 if settings.langsmith_api_key and not os.getenv("LANGSMITH_API_KEY"):
@@ -52,11 +56,17 @@ app.add_middleware(
     allow_headers=["*"],  # Allow all headers
 )
 
-app.add_middleware(
-    RateLimitMiddleware,
-    skip_paths=["/docs", "/redoc", "/openapi.json", "/health/live"]  # Skip docs and basic health
-)
+# app.add_middleware(
+#     RateLimitMiddleware,
+#     skip_paths=["/docs", "/redoc", "/openapi.json", "/health/live"]  # Skip docs and basic health
+# )
 app.add_middleware(CostMonitoringMiddleware)
+# Temporarily disable latency middleware to avoid double recording
+# app.add_middleware(
+#     LatencyTrackingMiddleware,
+#     specific_endpoints=["enhanced-chat", "auth", "evaluation", "health"],  # Track specific endpoints
+#     store_in_db=True
+# )
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -79,6 +89,8 @@ app.include_router(enhanced_chat_router, prefix="/api")
 app.include_router(evaluation_router, prefix="/api", tags=["evaluation"])
 app.include_router(rerank_weights_router, prefix="/api", tags=["rerank-weights"])
 app.include_router(eval_dashboard, prefix="/api", tags=["evaluation-dashboard"])
+app.include_router(latency_metrics_router, prefix="/api", tags=["latency-metrics"])
+app.include_router(cache_management_router, prefix="/api", tags=["cache-management"])
 
 # Global exception handler
 @app.exception_handler(Exception)
