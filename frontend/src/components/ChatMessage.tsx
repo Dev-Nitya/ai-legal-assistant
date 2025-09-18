@@ -88,6 +88,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
                     style={{ animationDelay: "0.4s" }}
                   ></div>
                 </div>
+                <span className="ml-2 text-xs text-blue-600">Streaming...</span>
               </div>
             )}
           </div>
@@ -140,4 +141,4 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   );
 };
 
-export default ChatMessage;
+export default React.memo(ChatMessage);

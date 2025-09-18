@@ -103,9 +103,6 @@ async def stream_response_generator(
         # Yield initial status
         yield f"data: {json.dumps({'type': 'status', 'message': 'Processing query...', 'timestamp': time.time()})}\n\n"
         
-        # Add small delay to ensure status is sent first
-        await asyncio.sleep(0.05)
-        
         # Step 1: Check cache first
         cache_key = f"{payload.question}_{payload.complexity_level}"
         cached_response = cache.get_cached_query(cache_key)
@@ -121,13 +118,11 @@ async def stream_response_generator(
         
         # Step 2: Process query
         yield f"data: {json.dumps({'type': 'status', 'message': 'Analyzing query...', 'timestamp': time.time()})}\n\n"
-        await asyncio.sleep(0.05)
         
         query_analysis = query_processor.preprocess_query(payload.question)
         
         # Step 3: Document retrieval
         yield f"data: {json.dumps({'type': 'status', 'message': 'Retrieving relevant documents...', 'timestamp': time.time()})}\n\n"
-        await asyncio.sleep(0.05)
         
         if enhanced_retriever:
             filters = query_analysis.get('filters', {})
@@ -143,7 +138,6 @@ async def stream_response_generator(
         
         # Step 4: Reranking and confidence
         yield f"data: {json.dumps({'type': 'status', 'message': 'Processing documents...', 'timestamp': time.time()})}\n\n"
-        await asyncio.sleep(0.05)
         
         # Quick reranking
         enriched = []
@@ -166,7 +160,6 @@ async def stream_response_generator(
         
         # Step 5: Generate streaming response
         yield f"data: {json.dumps({'type': 'status', 'message': 'Generating response...', 'timestamp': time.time()})}\n\n"
-        await asyncio.sleep(0.05)
         
         # Setup streaming callback
         streaming_handler = StreamingCallbackHandler()
@@ -199,10 +192,6 @@ async def stream_response_generator(
         # Start streaming generation
         accumulated_response = ""
         
-        # Yield initial token status
-        yield f"data: {json.dumps({'type': 'status', 'message': 'Starting response generation...', 'timestamp': time.time()})}\n\n"
-        await asyncio.sleep(0.1)
-        
         # Use async streaming with immediate yielding
         try:
             async for chunk in llm.astream([
@@ -215,9 +204,6 @@ async def stream_response_generator(
                     
                     # Yield each token/chunk immediately for real-time streaming
                     yield f"data: {json.dumps({'type': 'token', 'content': content, 'timestamp': time.time()})}\n\n"
-                    
-                    # Force flush - no delay needed for real streaming
-                    # The key is yielding immediately without buffering
                     
         except Exception as stream_error:
             logger.error(f"Streaming generation error: {stream_error}")

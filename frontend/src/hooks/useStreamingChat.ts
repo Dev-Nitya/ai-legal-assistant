@@ -110,67 +110,69 @@ export const useStreamingChat = () => {
         const chunk = decoder.decode(value, { stream: true });
         buffer += chunk;
 
-        // Process complete lines (SSE events end with \n\n)
-        const lines = buffer.split('\n\n');
-        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+        // Process complete SSE events (ending with \n\n)
+        const events = buffer.split('\n\n');
+        buffer = events.pop() || ''; // Keep incomplete event in buffer
 
-        for (const line of lines) {
-          if (line.trim() === '') continue;
+        for (const event of events) {
+          if (!event.trim()) continue;
           
-          // Parse SSE format: "data: {...}"
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6).trim();
-            
-            if (data === '[DONE]') {
-              setState(prev => ({
-                ...prev,
-                isStreaming: false,
-                status: 'Complete'
-              }));
-              return;
-            }
-
-            try {
-              const message: StreamingMessage = JSON.parse(data);
+          const lines = event.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6).trim();
               
-              setState(prev => {
-                switch (message.type) {
-                  case 'status':
-                    return {
-                      ...prev,
-                      status: message.message || 'Processing...'
-                    };
-                  
-                  case 'token':
-                    return {
-                      ...prev,
-                      currentResponse: prev.currentResponse + (message.content || ''),
-                      status: 'Generating response...'
-                    };
-                  
-                  case 'complete':
-                    return {
-                      ...prev,
-                      finalData: message.data,
-                      currentResponse: message.data?.answer || prev.currentResponse,
-                      status: 'Complete',
-                      isStreaming: false
-                    };
-                  
-                  case 'error':
-                    return {
-                      ...prev,
-                      error: message.message || 'An error occurred',
-                      status: 'Error',
-                      isStreaming: false
-                    };
-                  
-                  default:
-                    return prev;
-                }
-              });
-            } catch (parseError) {
-              console.warn('Failed to parse streaming message:', data);
+              if (data === '[DONE]') {
+                setState(prev => ({
+                  ...prev,
+                  isStreaming: false,
+                  status: 'Complete'
+                }));
+                return;
+              }
+
+              try {
+                const message: StreamingMessage = JSON.parse(data);
+                
+                setState(prev => {
+                  switch (message.type) {
+                    case 'status':
+                      return {
+                        ...prev,
+                        status: message.message || 'Processing...'
+                      };
+                    
+                    case 'token':
+                      return {
+                        ...prev,
+                        currentResponse: prev.currentResponse + (message.content || ''),
+                        status: 'Generating response...'
+                      };
+                    
+                    case 'complete':
+                      return {
+                        ...prev,
+                        finalData: message.data,
+                        currentResponse: message.data?.answer || prev.currentResponse,
+                        status: 'Complete',
+                        isStreaming: false
+                      };
+                    
+                    case 'error':
+                      return {
+                        ...prev,
+                        error: message.message || 'An error occurred',
+                        status: 'Error',
+                        isStreaming: false
+                      };
+                    
+                    default:
+                      return prev;
+                  }
+                });
+              } catch (parseError) {
+                console.warn('Failed to parse streaming message:', data);
+              }
             }
           }
         }

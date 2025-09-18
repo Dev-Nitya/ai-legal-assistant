@@ -57,6 +57,7 @@ const enhancedChatStreamAPI = async (
   let finalData: any = null;
   let currentMessageId = Date.now().toString();
   let isFirstToken = true;
+  let buffer = ''; // Buffer for incomplete SSE chunks
 
   try {
     while (true) {
@@ -64,80 +65,91 @@ const enhancedChatStreamAPI = async (
       if (done) break;
 
       const chunk = new TextDecoder().decode(value);
-      const lines = chunk.split('\n');
+      buffer += chunk;
 
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6);
-          
-          if (data === '[DONE]') {
-            // Stream complete, create final message with all metadata
-            if (finalData) {
-              const finalMessage: Message = {
-                id: currentMessageId,
-                content: fullResponse,
-                sender: 'assistant',
-                timestamp: new Date(),
-                sources: finalData.source_documents,
-                confidence: finalData.confidence,
-                tools_used: finalData.tools_used,
-                citations: finalData.citations,
-                response_time_ms: finalData.response_time_ms,
-                query_analysis: finalData.query_analysis,
-                retrieval_stats: finalData.retrieval_stats,
-              };
-              onMessage(finalMessage);
+      // Process complete SSE events (ending with \n\n)
+      const events = buffer.split('\n\n');
+      buffer = events.pop() || ''; // Keep incomplete event in buffer
 
-              // Show cost estimate if available
-              if (finalData.cost_estimate) {
-                const totalCost = Object.values(finalData.cost_estimate).reduce((sum: number, cost: any) => sum + cost, 0);
-                if (totalCost > 0) {
-                  toast.success(`Query completed (Cost: $${totalCost.toFixed(4)})`);
+      for (const event of events) {
+        if (!event.trim()) continue;
+        
+        const lines = event.split('\n');
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            
+            if (data === '[DONE]') {
+              // Stream complete, create final message with all metadata
+              if (finalData) {
+                const finalMessage: Message = {
+                  id: currentMessageId,
+                  content: fullResponse,
+                  sender: 'assistant',
+                  timestamp: new Date(),
+                  sources: finalData.source_documents,
+                  confidence: finalData.confidence,
+                  tools_used: finalData.tools_used,
+                  citations: finalData.citations,
+                  response_time_ms: finalData.response_time_ms,
+                  query_analysis: finalData.query_analysis,
+                  retrieval_stats: finalData.retrieval_stats,
+                };
+                onMessage(finalMessage);
+
+                // Show cost estimate if available
+                if (finalData.cost_estimate) {
+                  const totalCost = Object.values(finalData.cost_estimate).reduce((sum: number, cost: any) => sum + cost, 0);
+                  if (totalCost > 0) {
+                    toast.success(`Query completed (Cost: $${totalCost.toFixed(4)})`);
+                  }
                 }
               }
+              return;
             }
-            return;
-          }
 
-          try {
-            const eventData = JSON.parse(data);
-            
-            if (eventData.type === 'token') {
-              // Call onStreamingStart only on the first token
-              if (isFirstToken && onStreamingStart) {
-                onStreamingStart();
-                isFirstToken = false;
+            try {
+              const eventData = JSON.parse(data);
+              
+              if (eventData.type === 'token') {
+                // Call onStreamingStart only on the first token
+                if (isFirstToken && onStreamingStart) {
+                  onStreamingStart();
+                  isFirstToken = false;
+                }
+                
+                fullResponse += eventData.content;
+                
+                // Send streaming update with current content
+                const streamingMessage: Message = {
+                  id: currentMessageId,
+                  content: fullResponse,
+                  sender: 'assistant',
+                  timestamp: new Date(),
+                  isStreaming: true, // Add a flag to indicate this is a streaming message
+                };
+                onMessage(streamingMessage);
+                
+              } else if (eventData.type === 'complete') {
+                finalData = eventData.data;
+                // For cached responses, the answer comes directly in the complete event
+                if (eventData.data && eventData.data.answer && !fullResponse) {
+                  fullResponse = eventData.data.answer;
+                }
+              } else if (eventData.type === 'error') {
+                throw new Error(eventData.error || 'Stream error occurred');
               }
-              
-              fullResponse += eventData.content;
-              
-              // Send streaming update with current content
-              const streamingMessage: Message = {
-                id: currentMessageId,
-                content: fullResponse,
-                sender: 'assistant',
-                timestamp: new Date(),
-                isStreaming: true, // Add a flag to indicate this is a streaming message
-              };
-              onMessage(streamingMessage);
-              
-            } else if (eventData.type === 'complete') {
-              finalData = eventData.data;
-              // For cached responses, the answer comes directly in the complete event
-              if (eventData.data && eventData.data.answer && !fullResponse) {
-                fullResponse = eventData.data.answer;
+            } catch (parseError) {
+              if (data !== '') {
+                console.warn('Failed to parse SSE data:', data);
               }
-            } else if (eventData.type === 'error') {
-              throw new Error(eventData.error || 'Stream error occurred');
-            }
-          } catch (parseError) {
-            if (data !== '') {
-              console.warn('Failed to parse SSE data:', data);
             }
           }
         }
       }
     }
+  } catch (streamError) {
+    throw streamError;
   } finally {
     reader.releaseLock();
   }

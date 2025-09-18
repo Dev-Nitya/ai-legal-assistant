@@ -435,14 +435,13 @@ const MainApp: React.FC = () => {
                     </motion.div>
                   ) : (
                     <div className="max-w-4xl mx-auto space-y-6">
-                      {messages.map((message, index) => (
+                      {messages.map((message) => (
                         <motion.div
                           key={message.id}
                           initial={{ opacity: 0, y: 20, scale: 0.95 }}
                           animate={{ opacity: 1, y: 0, scale: 1 }}
                           transition={{
                             duration: 0.4,
-                            delay: index * 0.1,
                             ease: "easeOut",
                           }}
                         >
