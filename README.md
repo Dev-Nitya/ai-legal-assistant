@@ -33,7 +33,7 @@ The AI Legal Assistant is a comprehensive solution that combines advanced natura
 
 #### Single Question Evaluation
 
-![Single Question RAG Evaluation](./single_evaluation.gif)
+![Single Question RAG Evaluation](./docs/images/single_evaluation.gif)
 _Real-time evaluation of individual questions showing accuracy, relevance, and groundedness metrics_
 
 ### Key Capabilities
@@ -383,7 +383,7 @@ cp -r backend/documents/ backup/documents_$(date +%Y%m%d)/
 
 The system includes a comprehensive evaluation framework:
 
-![Batch Evaluation Dashboard](./batch_evaluation.png)
+![Batch Evaluation Dashboard](./docs/images/batch_evaluation.png)
 _Comprehensive batch evaluation dashboard showing detailed metrics across multiple test cases_
 
 ```python
