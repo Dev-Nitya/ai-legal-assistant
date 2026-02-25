@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import type { LatencyStatsResponse, EndpointSummaryResponse, LatencyMeasurementsResponse } from '../types';
 
-const API_BASE = 'http://localhost:8000/api';
+// Use relative path to leverage Vite's proxy configuration
+const API_BASE = '/api';
 
 interface UseLatencyDataOptions {
   refreshInterval?: number; // milliseconds
   source?: 'memory' | 'database';
   hoursBack?: number;
+  typeCategory?: string;
 }
 
 export const useLatencyStats = (endpoint: string, userId?: string, options: UseLatencyDataOptions = {}) => {
@@ -14,7 +16,7 @@ export const useLatencyStats = (endpoint: string, userId?: string, options: UseL
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const { refreshInterval = 0, source = 'memory', hoursBack = 24 } = options;
+  const { refreshInterval = 0, source = 'memory', hoursBack = 24, typeCategory } = options;
 
   const fetchData = async () => {
     try {
@@ -25,6 +27,7 @@ export const useLatencyStats = (endpoint: string, userId?: string, options: UseL
         source,
         hours_back: hoursBack.toString(),
         ...(userId && { user_id: userId }),
+        ...(typeCategory && { type_category: typeCategory }),
       });
 
       const url = `${API_BASE}/latency/stats/${endpoint}?${params}`;
@@ -67,7 +70,7 @@ export const useLatencySummary = (options: UseLatencyDataOptions = {}) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const { refreshInterval = 0, source = 'memory', hoursBack = 24 } = options;
+  const { refreshInterval = 0, source = 'memory', hoursBack = 24, typeCategory } = options;
 
   const fetchData = async () => {
     try {
@@ -77,6 +80,7 @@ export const useLatencySummary = (options: UseLatencyDataOptions = {}) => {
       const params = new URLSearchParams({
         source,
         hours_back: hoursBack.toString(),
+        ...(typeCategory && { type_category: typeCategory }),
       });
 
       const url = `${API_BASE}/latency/summary?${params}`;

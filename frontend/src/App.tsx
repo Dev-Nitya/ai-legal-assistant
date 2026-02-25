@@ -20,10 +20,10 @@ import UserDashboard from "./components/UserDashboard";
 import AdvancedChatSettings from "./components/AdvancedChatSettings";
 import EvaluationInterface from "./components/EvaluationInterface";
 import EvaluationDashboard from "./components/EvaluationDashboard";
-import RerankWeightsControl from "./components/RerankWeightsControl";
 import { LatencyDashboard } from "./components/LatencyDashboard";
 import { LatencyWidget } from "./components/LatencyWidget";
 import CacheManagement from "./components/CacheManagement";
+import LatencyEntries from "./components/LatencyEntries";
 import { StreamingChat } from "./components/StreamingChat";
 import { useEnhancedChatWithBudget } from "./hooks/useEnhancedChatWithBudget";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
@@ -44,6 +44,7 @@ const MainApp: React.FC = () => {
     | "settings"
     | "latency"
     | "cache"
+    | "latencyEntries"
   >("chat");
   const [showLogin, setShowLogin] = useState(false);
   const [showUserDashboard, setShowUserDashboard] = useState(false);
@@ -239,7 +240,7 @@ const MainApp: React.FC = () => {
                 >
                   <TrendingUp className="h-5 w-5" />
                 </motion.button>
-                <motion.button
+                {/* <motion.button
                   onClick={() => setActiveView("settings")}
                   className={`p-2 rounded-lg transition-all duration-200 ${
                     activeView === "settings"
@@ -250,7 +251,7 @@ const MainApp: React.FC = () => {
                   whileTap={{ scale: 0.95 }}
                 >
                   <Settings className="h-5 w-5" />
-                </motion.button>
+                </motion.button> */}
                 <motion.button
                   onClick={() => setActiveView("cache")}
                   className={`p-2 rounded-lg transition-all duration-200 ${
@@ -569,7 +570,17 @@ const MainApp: React.FC = () => {
             <EvaluationDashboard token={token || undefined} />
           )}
           {activeView === "latency" && <LatencyDashboard />}
-          {activeView === "cache" && <CacheManagement />}
+          {activeView === "cache" && (
+            <CacheManagement
+              onViewLatencyEntries={() => setActiveView("latencyEntries")}
+            />
+          )}
+          {activeView === "latencyEntries" && (
+            <LatencyEntries
+              onBack={() => setActiveView("cache")}
+              userId={user?.user_id}
+            />
+          )}
           {activeView === "settings" && (
             <div className="space-y-6">
               <AdvancedChatSettings
@@ -579,15 +590,6 @@ const MainApp: React.FC = () => {
                 }
                 onReset={resetChatSettings}
               />
-
-              {/* Rerank Weights Control */}
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2, duration: 0.6 }}
-              >
-                <RerankWeightsControl />
-              </motion.div>
             </div>
           )}
         </div>

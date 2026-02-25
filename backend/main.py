@@ -16,20 +16,17 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 from redis_cache.redis_cache import cache 
-from routes.health import router as health_router
 from routes.enhanced_chat import router as enhanced_chat_router
 from routes.evaluation import router as evaluation_router
 from routes.auth import router as auth_router
-from routes.rerank_weights import router as rerank_weights_router
 from routes.eval_dashboard import router as eval_dashboard
 from routes.latency_metrics import router as latency_metrics_router
 from routes.cache_management import router as cache_management_router
+from chain.retriever import enhanced_retriever
 
 from config.settings import settings
 from config.database import get_db, db_manager
-# from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.cost_monitoring_middleware import CostMonitoringMiddleware
-from middleware.latency_tracking_middleware import LatencyTrackingMiddleware
 
 os.environ["OPENAI_API_KEY"] = settings.openai_api_key
 if settings.langsmith_api_key and not os.getenv("LANGSMITH_API_KEY"):
@@ -49,24 +46,16 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"] if os.getenv("ENVIRONMENT") == "development" else [
         "http://localhost:3000",
-        "http://127.0.0.1:3000"
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",  # Default Vite dev port
+        "http://127.0.0.1:5173"   # Default Vite dev port with 127.0.0.1
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],  # Allow all headers
 )
 
-# app.add_middleware(
-#     RateLimitMiddleware,
-#     skip_paths=["/docs", "/redoc", "/openapi.json", "/health/live"]  # Skip docs and basic health
-# )
 app.add_middleware(CostMonitoringMiddleware)
-# Temporarily disable latency middleware to avoid double recording
-# app.add_middleware(
-#     LatencyTrackingMiddleware,
-#     specific_endpoints=["enhanced-chat", "auth", "evaluation", "health"],  # Track specific endpoints
-#     store_in_db=True
-# )
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -83,14 +72,25 @@ async def log_requests(request: Request, call_next):
     
     return response
 
-app.include_router(health_router)
 app.include_router(auth_router, prefix="/api", tags=["authentication"])
 app.include_router(enhanced_chat_router, prefix="/api")
 app.include_router(evaluation_router, prefix="/api", tags=["evaluation"])
-app.include_router(rerank_weights_router, prefix="/api", tags=["rerank-weights"])
 app.include_router(eval_dashboard, prefix="/api", tags=["evaluation-dashboard"])
 app.include_router(latency_metrics_router, prefix="/api", tags=["latency-metrics"])
 app.include_router(cache_management_router, prefix="/api", tags=["cache-management"])
+
+@app.on_event("startup")
+async def load_sbert_reranker():
+    if enhanced_retriever:
+        print("🔄 Loading SBERT reranker model at startup...")
+        enhanced_retriever._ensure_reranker_loaded()
+        if getattr(enhanced_retriever, "_reranker_model", None) is not None:
+            print("✅ SBERT reranker loaded successfully.")
+        else:
+            print("⚠️  SBERT reranker could not be loaded.")
+    else:
+        print("⚠️  Enhanced retriever not available; SBERT reranker not loaded.")
+
 
 # Global exception handler
 @app.exception_handler(Exception)
@@ -104,9 +104,14 @@ async def global_exception_handler(request, exc):
 
 if __name__ == "__main__":
     import uvicorn
+    import sys
+    
+    # Detect if running under debugger
+    is_debugging = hasattr(sys, 'gettrace') and sys.gettrace() is not None
+    
     uvicorn.run(
-        app,
+        "main:app" if not is_debugging else app,  # Use app object when debugging
         host="0.0.0.0",
         port=int(os.getenv("PORT", 8000)),
-        reload=os.getenv("ENVIRONMENT") == "development"
+        reload=os.getenv("ENVIRONMENT") == "development" and not is_debugging  # Disable reload when debugging
     )

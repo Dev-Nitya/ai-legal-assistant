@@ -63,7 +63,8 @@ class LatencyTrackingMiddleware(BaseHTTPMiddleware):
                 latency_ms=latency_ms,
                 user_id=user_id,
                 request_id=request_id,
-                status_code=response.status_code
+                status_code=response.status_code,
+                type="overall"  # You can customize this type based on your needs
             )
         else:
             logger.debug(f"Not tracking endpoint '{endpoint}' (not in tracked list: {self.specific_endpoints})")
@@ -148,7 +149,8 @@ class LatencyTrackingMiddleware(BaseHTTPMiddleware):
         latency_ms: float,
         user_id: Optional[str] = None,
         request_id: Optional[str] = None,
-        status_code: int = 200
+        status_code: int = 200,
+        type: Optional[str] = None
     ) -> None:
         """Record latency in both in-memory tracker and database."""
         try:
@@ -158,7 +160,7 @@ class LatencyTrackingMiddleware(BaseHTTPMiddleware):
             # Record in database if enabled
             if self.store_in_db:
                 await self._store_in_database(
-                    endpoint, latency_ms, user_id, request_id, status_code
+                    endpoint, latency_ms, user_id, request_id, status_code, type
                 )
                 
         except Exception as e:
@@ -170,7 +172,8 @@ class LatencyTrackingMiddleware(BaseHTTPMiddleware):
         latency_ms: float,
         user_id: Optional[str],
         request_id: Optional[str],
-        status_code: int
+        status_code: int,
+        type: Optional[str]
     ) -> None:
         """Store latency measurement in database."""
         db = None
@@ -192,7 +195,8 @@ class LatencyTrackingMiddleware(BaseHTTPMiddleware):
                 latency_ms=latency_ms,
                 user_id=user_id,
                 request_id=request_id,
-                latency_metadata=latency_metadata
+                latency_metadata=latency_metadata,
+                type_category=type
             )
             
             if not success:

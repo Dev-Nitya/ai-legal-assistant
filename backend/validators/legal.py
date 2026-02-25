@@ -78,7 +78,11 @@ def _has_legal_context(text: str) -> bool:
         # Legal questions words
         'what are my rights', 'is it legal', 'can I', 'should I',
         'what happens if', 'how do I', 'what is the law',
-        'kya main kar sakta hun', 'kya yeh legal hai'
+        'kya main kar sakta hun', 'kya yeh legal hai',
+
+        'fine', 'penalty', 'imprisonment', 'compensation', 'damages', 'injunction',
+        'liable', 'negligence', 'breach', 'enforceable', 'valid', 'illegal', 'unlawful', 'punishable', 'offense', 'crime',
+        'chalaan'
     ]
 
     text_lower = text.lower()

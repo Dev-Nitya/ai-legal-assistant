@@ -59,9 +59,6 @@ class LegalHybridRetriever:
         if filters:
             docs = self._apply_filters(docs, filters)
 
-        # Rerank documents for better relevance
-        docs = self._rerank_documents(docs, query)
-
         def _pick_representative_page(pages: List[Document], prefer_section: Optional[str] = None) -> Document:
             # prefer a page that contains the section token in content
             if prefer_section:

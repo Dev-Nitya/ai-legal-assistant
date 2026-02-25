@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { ChatRequest, ChatResponse, EnhancedChatRequest, EnhancedChatResponse } from '../types';
 
-const API_BASE_URL = 'http://localhost:8000/api';
+const API_BASE_URL = '/api';
 
 interface UseChatAPIOptions {
   token?: string;

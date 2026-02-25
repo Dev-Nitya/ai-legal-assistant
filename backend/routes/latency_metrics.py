@@ -35,6 +35,7 @@ async def get_endpoint_latency_stats(
     source: str = Query("memory", description="Data source: 'memory' or 'database'"),
     hours_back: int = Query(24, description="Hours back to analyze (for database source)"),
     exclude_cache: bool = Query(False, description="Exclude cache hits (for database source)"),
+    type_category: Optional[str] = Query(None, description="Filter by latency type: 'overall', 'API', 'LLM', 'tool'"),
     db: Session = Depends(get_db)
 ):
     """
@@ -50,7 +51,7 @@ async def get_endpoint_latency_stats(
         elif source == "database":
             # Get stats from database
             stats = LatencyMetricService.calculate_stats_from_db(
-                db, endpoint, user_id, hours_back, exclude_cache
+                db, endpoint, user_id, hours_back, exclude_cache, type_category
             )
             if not stats:
                 stats = {
@@ -90,6 +91,7 @@ async def get_latency_summary(
     source: str = Query("memory", description="Data source: 'memory' or 'database'"),
     hours_back: int = Query(24, description="Hours back to analyze (for database source)"),
     include_cache: bool = Query(True, description="Include cache hits in database stats"),
+    type_category: Optional[str] = Query(None, description="Filter by latency type: 'overall', 'API', 'LLM', 'tool'"),
     db: Session = Depends(get_db)
 ):
     """
@@ -104,7 +106,7 @@ async def get_latency_summary(
         elif source == "database":
             # Get stats from database
             if include_cache:
-                endpoints = LatencyMetricService.get_endpoint_summary(db, hours_back)
+                endpoints = LatencyMetricService.get_endpoint_summary(db, hours_back, type_category)
             else:
                 # Get only non-cache stats
                 endpoints = LatencyMetricService.get_endpoint_summary_no_cache(db, hours_back)

@@ -164,17 +164,13 @@ class EnhancedChatResponse(BaseResponseModel):
     
     answer: str = Field(..., description="AI assistant's response")
     confidence: float = Field(ge=0.0, le=1.0, description="Response confidence")
-    source_documents: List[SourceDocument] = Field(
-        default_factory=list,
-        description="Source documents with full metadata"
-    )
     tools_used: List[str] = Field(
         default_factory=list,
         description="Legal tools used in generating the response"
     )
     citations: List[Dict[str, Any]] = Field(
         default_factory=list,
-        description="Formatted citations for legal sources"
+        description="Enhanced citations with full source metadata, snippets, and usage tracking"
     )
     reading_level: ComplexityLevel = Field(description="Actual complexity level of response")
     response_time_ms: int = Field(ge=0, description="Total response time")

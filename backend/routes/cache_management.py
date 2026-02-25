@@ -174,7 +174,7 @@ async def clear_all_cache(
             # Redis implementation
             if preserve_vectors:
                 # Clear only specific prefixes, preserving vector embeddings
-                prefixes_to_clear = ["query:", "latency:", "eval_score:", "eval_rerank_weights"]
+                prefixes_to_clear = ["query:", "latency:", "eval_score:"]
                 for prefix in prefixes_to_clear:
                     keys = cache.client.keys(f"{prefix}*")
                     if keys:
@@ -193,7 +193,7 @@ async def clear_all_cache(
                 # Clear only specific prefixes
                 keys_to_clear = []
                 for key in cache._store.keys():
-                    if any(key.startswith(prefix) for prefix in ["query:", "latency:", "eval_score:", "eval_rerank_weights"]):
+                    if any(key.startswith(prefix) for prefix in ["query:", "latency:", "eval_score:"]):
                         keys_to_clear.append(key)
                 
                 for key in keys_to_clear:

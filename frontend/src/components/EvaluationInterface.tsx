@@ -49,7 +49,7 @@ const EvaluationInterface: React.FC<EvaluationInterfaceProps> = ({
     question_type: "easy", // Default to 'easy'
   });
 
-  const API_BASE_URL = "http://localhost:8000/api";
+  const API_BASE_URL = "/api";
 
   // Update batch config user_id when user changes
   useEffect(() => {
@@ -477,7 +477,7 @@ const EvaluationInterface: React.FC<EvaluationInterfaceProps> = ({
                       <p
                         className={`text-lg font-bold ${getScoreColor(
                           typeof value === "number" ? value : 0,
-                          key
+                          key,
                         )}`}
                       >
                         {typeof value === "number"
@@ -485,7 +485,7 @@ const EvaluationInterface: React.FC<EvaluationInterfaceProps> = ({
                           : value}
                       </p>
                     </div>
-                  )
+                  ),
                 )}
               </div>
 
@@ -534,7 +534,7 @@ const EvaluationInterface: React.FC<EvaluationInterfaceProps> = ({
                       <p className="text-2xl font-bold text-primary-600">
                         {formatScore(
                           results.average_scores.overall_score || 0,
-                          "overall_score"
+                          "overall_score",
                         )}
                       </p>
                     </div>
@@ -571,13 +571,13 @@ const EvaluationInterface: React.FC<EvaluationInterfaceProps> = ({
                         <p
                           className={`text-lg font-bold ${getScoreColor(
                             score,
-                            metric
+                            metric,
                           )}`}
                         >
                           {formatScore(score, metric)}
                         </p>
                       </div>
-                    )
+                    ),
                   )}
                 </div>
               </div>
@@ -603,7 +603,7 @@ const EvaluationInterface: React.FC<EvaluationInterfaceProps> = ({
                                 key={metric}
                                 className={`font-medium ${getScoreColor(
                                   score,
-                                  metric
+                                  metric,
                                 )}`}
                               >
                                 {getMetricDisplayName(metric)}:{" "}
@@ -612,7 +612,7 @@ const EvaluationInterface: React.FC<EvaluationInterfaceProps> = ({
                             ))}
                           </div>
                         </div>
-                      )
+                      ),
                     )}
                   </div>
                 </div>

@@ -34,7 +34,7 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
-const API_BASE_URL = "http://localhost:8000/api";
+const API_BASE_URL = "/api";
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -160,7 +160,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       saveAuthData(data.access_token, data.user);
 
       toast.success(
-        `Welcome to AI Legal Assistant, ${data.user.full_name}! Your account has been created successfully.`
+        `Welcome to AI Legal Assistant, ${data.user.full_name}! Your account has been created successfully.`,
       );
     } catch (error) {
       console.error("Registration error:", error);

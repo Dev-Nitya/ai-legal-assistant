@@ -19,7 +19,8 @@ class LatencyMetricService:
         latency_ms: float,
         user_id: Optional[str] = None,
         request_id: Optional[str] = None,
-        latency_metadata: Optional[dict] = None
+        latency_metadata: Optional[dict] = None,
+        type_category: Optional[str] = None
     ) -> bool:
         """
         Record an individual latency measurement in the database.
@@ -41,7 +42,8 @@ class LatencyMetricService:
                 latency_ms=latency_ms,
                 user_id=user_id,
                 request_id=request_id,
-                latency_metadata=latency_metadata
+                latency_metadata=latency_metadata,
+                type_category=type_category
             )
             
             db.add(metric)
@@ -145,7 +147,8 @@ class LatencyMetricService:
         user_id: Optional[str] = None,
         hours_back: int = 1,
         limit: int = 1000,
-        exclude_cache: bool = False
+        exclude_cache: bool = False,
+        type_category: Optional[str] = None
     ) -> List[Dict]:
         """
         Get individual latency measurements for an endpoint.
@@ -175,6 +178,9 @@ class LatencyMetricService:
             if user_id:
                 query = query.filter(LatencyMetric.user_id == user_id)
             
+            if type_category:
+                query = query.filter(LatencyMetric.type == type_category)
+            
             if exclude_cache:
                 # Exclude cache hits by checking metadata
                 query = query.filter(
@@ -195,7 +201,8 @@ class LatencyMetricService:
         endpoint: str,
         user_id: Optional[str] = None,
         hours_back: int = 1,
-        exclude_cache: bool = False
+        exclude_cache: bool = False,
+        type_category: Optional[str] = None
     ) -> Optional[Dict[str, float]]:
         """
         Calculate statistics from individual measurements stored in database.
@@ -212,7 +219,7 @@ class LatencyMetricService:
         """
         try:
             measurements = LatencyMetricService.get_individual_measurements(
-                db, endpoint, user_id, hours_back, limit=10000, exclude_cache=exclude_cache
+                db, endpoint, user_id, hours_back, limit=10000, exclude_cache=exclude_cache, type_category=type_category
             )
             
             if not measurements:
@@ -283,7 +290,8 @@ class LatencyMetricService:
     @staticmethod
     def get_endpoint_summary(
         db: Session,
-        hours_back: int = 24
+        hours_back: int = 24,
+        type_category: Optional[str] = None
     ) -> Dict[str, Dict]:
         """
         Get a summary of latency stats for all endpoints.
@@ -299,17 +307,22 @@ class LatencyMetricService:
             cutoff_time = int((datetime.utcnow() - timedelta(hours=hours_back)).timestamp() * 1000)
             
             # Get unique endpoints that have recent measurements
-            endpoints = db.query(LatencyMetric.endpoint).filter(
+            query = db.query(LatencyMetric.endpoint).filter(
                 and_(
                     LatencyMetric.measurement_type == "individual",
                     LatencyMetric.timestamp >= cutoff_time
                 )
-            ).distinct().all()
+            )
+            
+            if type_category:
+                query = query.filter(LatencyMetric.type == type_category)
+                
+            endpoints = query.distinct().all()
             
             summary = {}
             for (endpoint,) in endpoints:
                 stats = LatencyMetricService.calculate_stats_from_db(
-                    db, endpoint, hours_back=hours_back
+                    db, endpoint, hours_back=hours_back, type_category=type_category
                 )
                 if stats:
                     summary[endpoint] = stats

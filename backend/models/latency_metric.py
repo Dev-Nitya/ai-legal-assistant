@@ -31,7 +31,8 @@ class LatencyMetric(Base):
     
     # Additional metadata
     latency_metadata = Column(Text, nullable=True)  # JSON string for additional context
-    
+    type = Column(String(50), nullable=True)  # Optional type field for categorization
+
     # Indexes for efficient querying
     __table_args__ = (
         Index('idx_endpoint_timestamp', 'endpoint', 'timestamp'),
@@ -56,6 +57,7 @@ class LatencyMetric(Base):
             "median_ms": self.median_ms,
             "p95_ms": self.p95_ms,
             "p99_ms": self.p99_ms,
+            "type": self.type,  # Include the type field
         }
         
         # Parse metadata if it exists
@@ -76,7 +78,9 @@ class LatencyMetric(Base):
         latency_ms: float, 
         user_id: str = None, 
         request_id: str = None,
-        latency_metadata: dict = None
+        latency_metadata: dict = None,
+        measurement_type: str = "individual",
+        type_category: str = None
     ):
         """Create an individual latency measurement record."""
         return cls(
@@ -85,7 +89,8 @@ class LatencyMetric(Base):
             latency_ms=latency_ms,
             timestamp=int(datetime.utcnow().timestamp() * 1000),
             request_id=request_id,
-            measurement_type="individual",
+            measurement_type=measurement_type,
+            type=type_category,
             latency_metadata=json.dumps(latency_metadata) if latency_metadata else None
         )
 

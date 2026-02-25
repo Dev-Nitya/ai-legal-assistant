@@ -7,9 +7,13 @@ import {
 
 interface CacheManagementProps {
   onDataCleared?: () => void;
+  onViewLatencyEntries?: () => void;
 }
 
-const CacheManagement: React.FC<CacheManagementProps> = ({ onDataCleared }) => {
+const CacheManagement: React.FC<CacheManagementProps> = ({
+  onDataCleared,
+  onViewLatencyEntries,
+}) => {
   const {
     data: cacheInfo,
     loading: infoLoading,
@@ -55,7 +59,7 @@ const CacheManagement: React.FC<CacheManagementProps> = ({ onDataCleared }) => {
     const result = await clearLatencyCache();
     if (result?.success) {
       setLastClearedMessage(
-        `Cleared ${result.latency_entries_cleared} latency cache entries`
+        `Cleared ${result.latency_entries_cleared} latency cache entries`,
       );
       refetchInfo();
       onDataCleared?.();
@@ -143,11 +147,16 @@ const CacheManagement: React.FC<CacheManagementProps> = ({ onDataCleared }) => {
               </div>
               <div className="text-sm text-gray-600">Cached Queries</div>
             </div>
-            <div className="text-center">
+            <div
+              className="text-center cursor-pointer hover:bg-gray-100 rounded-lg p-2 transition-colors"
+              onClick={() => onViewLatencyEntries?.()}
+              title="Click to view detailed latency entries"
+            >
               <div className="text-2xl font-bold text-purple-600">
                 {cacheInfo.cache_info.latency_count}
               </div>
               <div className="text-sm text-gray-600">Latency Entries</div>
+              <div className="text-xs text-purple-600 mt-1">View Details →</div>
             </div>
             <div className="text-center">
               <div className="text-2xl font-bold text-orange-600">

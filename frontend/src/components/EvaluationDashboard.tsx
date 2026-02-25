@@ -61,7 +61,7 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
   const [searchTerm, setSearchTerm] = useState("");
   const [compareMode, setCompareMode] = useState(false);
   const [selectedForComparison, setSelectedForComparison] = useState<string[]>(
-    []
+    [],
   );
   const [activeView, setActiveView] = useState<
     "overview" | "details" | "compare" | "run"
@@ -80,7 +80,7 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
   const fetchRuns = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch("http://localhost:8000/api/eval/list", {
+      const response = await fetch("/api/eval/list", {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!response.ok) throw new Error("Failed to fetch evaluation runs");
@@ -97,12 +97,10 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
     setLoading(true);
     try {
       const response = await fetch(
-        `http://localhost:8000/api/eval/report?name=${encodeURIComponent(
-          name
-        )}`,
+        `/api/eval/report?name=${encodeURIComponent(name)}`,
         {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
-        }
+        },
       );
       if (!response.ok) throw new Error("Failed to fetch run details");
       const data = await response.json();
@@ -119,12 +117,12 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
     setLoading(true);
     try {
       const response = await fetch(
-        `http://localhost:8000/api/eval/compare?base=${encodeURIComponent(
-          base
+        `/api/eval/compare?base=${encodeURIComponent(
+          base,
         )}&exp=${encodeURIComponent(exp)}`,
         {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
-        }
+        },
       );
       if (!response.ok) throw new Error("Failed to compare runs");
       const data = await response.json();
@@ -141,7 +139,7 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
     name: string,
     limit: number,
     created_by?: string,
-    question_type: string = "easy"
+    question_type: string = "easy",
   ) => {
     setIsRunning(true);
     setError(null);
@@ -157,24 +155,21 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
         }
       }
 
-      const response = await fetch(
-        `http://localhost:8000/api/eval/run_and_store`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({
-            name,
-            limit,
-            created_by,
-            user_id,
-            question_type,
-          }),
-        }
-      );
+      const response = await fetch(`/api/eval/run_and_store`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          name,
+          limit,
+          created_by,
+          user_id,
+          question_type,
+        }),
+      });
 
       if (!response.ok) throw new Error("Failed to run and store evaluation");
       const data = await response.json();
@@ -203,11 +198,11 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
   const deleteRun = async (runName: string) => {
     try {
       const response = await fetch(
-        `http://localhost:8000/api/eval/name/${encodeURIComponent(runName)}`,
+        `/api/eval/name/${encodeURIComponent(runName)}`,
         {
           method: "DELETE",
           headers: token ? { Authorization: `Bearer ${token}` } : {},
-        }
+        },
       );
 
       if (!response.ok) throw new Error("Failed to delete evaluation run");
@@ -231,7 +226,7 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
   }, [fetchRuns]);
 
   const filteredRuns = runs.filter((run) =>
-    run.name.toLowerCase().includes(searchTerm.toLowerCase())
+    run.name.toLowerCase().includes(searchTerm.toLowerCase()),
   );
 
   const formatTimestamp = (ts: number) => {
@@ -283,8 +278,8 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
       return value < 1000
         ? "text-green-600"
         : value < 3000
-        ? "text-yellow-600"
-        : "text-red-600";
+          ? "text-yellow-600"
+          : "text-red-600";
     }
 
     // Handle hallucination rate (lower is better)
@@ -292,8 +287,8 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
       return value < 0.1
         ? "text-green-600"
         : value < 0.3
-        ? "text-yellow-600"
-        : "text-red-600";
+          ? "text-yellow-600"
+          : "text-red-600";
     }
 
     // Handle most quality metrics (higher is better)
@@ -310,8 +305,8 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
       return value > 0.8
         ? "text-green-600"
         : value > 0.6
-        ? "text-yellow-600"
-        : "text-red-600";
+          ? "text-yellow-600"
+          : "text-red-600";
     }
 
     return "text-gray-600";
@@ -421,8 +416,8 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
     // Remove empty categories
     return Object.fromEntries(
       Object.entries(categories).filter(
-        ([_, metrics]) => Object.keys(metrics).length > 0
-      )
+        ([_, metrics]) => Object.keys(metrics).length > 0,
+      ),
     );
   };
 
@@ -430,7 +425,7 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
     if (compareMode) {
       if (selectedForComparison.includes(runName)) {
         setSelectedForComparison((prev) =>
-          prev.filter((name) => name !== runName)
+          prev.filter((name) => name !== runName),
         );
       } else if (selectedForComparison.length < 2) {
         setSelectedForComparison((prev) => [...prev, runName]);
@@ -762,14 +757,14 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
                             {React.createElement(getMetricIcon(key), {
                               className: `h-4 w-4 ${getMetricColor(
                                 value,
-                                key
+                                key,
                               )}`,
                             })}
                           </div>
                           <p
                             className={`text-2xl font-bold ${getMetricColor(
                               value,
-                              key
+                              key,
                             )}`}
                           >
                             {formatMetricValue(value, key)}
@@ -778,7 +773,7 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
                       ))}
                     </div>
                   </div>
-                )
+                ),
               )}
             </div>
 
@@ -861,8 +856,8 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
                           data.delta > 0
                             ? "text-green-600"
                             : data.delta < 0
-                            ? "text-red-600"
-                            : "text-gray-600"
+                              ? "text-red-600"
+                              : "text-gray-600"
                         }`}
                       >
                         {data.delta > 0 ? "+" : ""}
@@ -889,8 +884,8 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
                         data.delta > 0
                           ? "bg-green-50/80"
                           : data.delta < 0
-                          ? "bg-red-50/80"
-                          : "bg-gray-50/80"
+                            ? "bg-red-50/80"
+                            : "bg-gray-50/80"
                       }`}
                     >
                       <p className="text-sm text-gray-600">Delta</p>
@@ -899,8 +894,8 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
                           data.delta > 0
                             ? "text-green-800"
                             : data.delta < 0
-                            ? "text-red-800"
-                            : "text-gray-800"
+                              ? "text-red-800"
+                              : "text-gray-800"
                         }`}
                       >
                         {data.delta > 0 ? "+" : ""}
@@ -954,7 +949,7 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
                       runForm.name,
                       runForm.limit,
                       runForm.created_by || undefined,
-                      runForm.question_type
+                      runForm.question_type,
                     );
                     setActiveView("overview");
                   } catch (err) {
@@ -1129,7 +1124,7 @@ const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ token }) => {
                       runForm.name,
                       runForm.limit,
                       runForm.created_by || undefined,
-                      runForm.question_type
+                      runForm.question_type,
                     );
                   } catch (err) {
                     // Error is already set by runAndStoreEvaluation

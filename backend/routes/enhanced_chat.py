@@ -14,6 +14,7 @@ import re
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
+from services.openai_service import openai_service
 from config.settings import settings
 from config.database import get_db
 from schemas.chat import EnhancedChatRequest, EnhancedChatResponse
@@ -58,16 +59,6 @@ Answer the user's question using the above context.
 
 EVAL_ALPHA = 0.75  # weight for retriever similarity
 EVAL_BETA = 0.25   # weight for offline eval_score
-
-try:
-    raw_weights = cache.get("eval_rerank_weights")
-    if raw_weights:
-        parsed_weights = raw_weights if isinstance(raw_weights, dict) else json.loads(raw_weights)
-        EVAL_ALPHA = float(parsed_weights.get("alpha", EVAL_ALPHA))
-        EVAL_BETA = float(parsed_weights.get("beta", EVAL_BETA))
-        logger.info("Loaded rerank weights from cache: alpha=%s beta=%s", EVAL_ALPHA, EVAL_BETA)
-except Exception:
-    logger.debug("No persisted rerank weights found or failed to load")
 
 class StreamingCallbackHandler(BaseCallbackHandler):
     """Custom callback handler for streaming LLM responses"""
@@ -119,11 +110,33 @@ async def stream_response_generator(
         # Step 2: Process query
         yield f"data: {json.dumps({'type': 'status', 'message': 'Analyzing query...', 'timestamp': time.time()})}\n\n"
         
+        query_start = time.time()
         query_analysis = query_processor.preprocess_query(payload.question)
+        query_time = (time.time() - query_start) * 1000
+        
+        # Record query analysis timing for streaming
+        try:
+            LatencyMetricService.record_latency(
+                db=db,
+                endpoint="enhanced-chat",
+                latency_ms=query_time,
+                user_id=payload.user_id,
+                request_id=request_id,
+                latency_metadata={
+                    "phase": "query_analysis",
+                    "complexity_level": payload.complexity_level,
+                    "query_length": len(payload.question),
+                    "streaming": True
+                },
+                type_category="phase_timing"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record streaming query analysis timing: {e}")
         
         # Step 3: Document retrieval
         yield f"data: {json.dumps({'type': 'status', 'message': 'Retrieving relevant documents...', 'timestamp': time.time()})}\n\n"
         
+        retrieval_start = time.time()
         if enhanced_retriever:
             filters = query_analysis.get('filters', {})
             # Use parallel async retrieval with reduced document count for speed
@@ -136,24 +149,60 @@ async def stream_response_generator(
             retriever = vectorstore.as_retriever(search_kwargs={"k": 2})  # Reduced from 3 to 2
             relevant_docs = retriever.get_relevant_documents(payload.question)
         
+        retrieval_time = (time.time() - retrieval_start) * 1000
+        
+        # Record retrieval timing for streaming
+        try:
+            LatencyMetricService.record_latency(
+                db=db,
+                endpoint="enhanced-chat",
+                latency_ms=retrieval_time,
+                user_id=payload.user_id,
+                request_id=request_id,
+                latency_metadata={
+                    "phase": "document_retrieval",
+                    "retriever_type": "enhanced" if enhanced_retriever else "basic",
+                    "k_documents": 2,
+                    "has_filters": bool(query_analysis.get('filters', {})),
+                    "docs_found": len(relevant_docs),
+                    "streaming": True
+                },
+                type_category="phase_timing"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record streaming retrieval timing: {e}")
+        
         # Step 4: Reranking and confidence
         yield f"data: {json.dumps({'type': 'status', 'message': 'Processing documents...', 'timestamp': time.time()})}\n\n"
         
         # Quick reranking
-        enriched = []
-        for doc in relevant_docs[:3]:
-            meta = getattr(doc, "metadata", {}) or {}
-            doc_id = meta.get("id") or meta.get("source_file") or meta.get("source") or f"{meta.get('source','unknown')}:{meta.get('page','-')}"
+        if enhanced_retriever:
+            rerank_start = time.time()
             
-            try:
-                similarity_score = float(getattr(doc, "score", None) or meta.get("similarity") or 0.0)
-            except Exception:
-                similarity_score = 0.0
-            
-            enriched.append((similarity_score, doc))
+            relevant_docs = enhanced_retriever.rerank(relevant_docs, payload.question, top_k=2, alpha=EVAL_ALPHA)
         
-        enriched.sort(key=lambda x: x[0], reverse=True)
-        relevant_docs = [doc for _, doc in enriched]
+            logger.debug(f"Reranked {len(relevant_docs)} documents")  # Reduced logging
+        
+            rerank_time = (time.time() - rerank_start) * 1000
+            print(f'⏱️  RERANKING: {rerank_time:.1f}ms')
+        
+            # Record reranking timing
+            try:
+                LatencyMetricService.record_latency(
+                    db=db,
+                    endpoint="enhanced-chat",
+                    latency_ms=rerank_time,
+                    user_id=payload.user_id,
+                    request_id=request_id,
+                    latency_metadata={
+                        "phase": "reranking",
+                        "alpha_weight": EVAL_ALPHA,
+                        "beta_weight": EVAL_BETA
+                    },
+                    type_category="phase_timing"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to record reranking timing: {e}")
         
         confidence = calculate_confidence(relevant_docs, query_analysis)
         context = format_context(relevant_docs)
@@ -175,6 +224,7 @@ async def stream_response_generator(
             callbacks=[streaming_handler, cost_callback],
             max_tokens=max_tokens,
             timeout=8,
+            client=openai_service.client,
             streaming=True  # Enable streaming
         )
         
@@ -191,6 +241,7 @@ async def stream_response_generator(
         
         # Start streaming generation
         accumulated_response = ""
+        first_token_recorded = False
         
         # Use async streaming with immediate yielding
         try:
@@ -202,12 +253,78 @@ async def stream_response_generator(
                     content = chunk.content
                     accumulated_response += content
                     
+                    # Record Time To First Token (TTFT) on first meaningful content
+                    if not first_token_recorded and content.strip():
+                        first_token_time = time.time()
+                        ttft_ms = int((first_token_time - start_time) * 1000)
+                        
+                        try:
+                            # Record TTFT latency with type 'response_start'
+                            latency_tracker.record_latency("enhanced-chat-ttft", ttft_ms, payload.user_id)
+                            
+                            ttft_metadata = {
+                                "complexity_level": payload.complexity_level,
+                                "from_cache": False,
+                                "confidence": confidence,
+                                "documents_retrieved": len(relevant_docs),
+                                "source": "streaming_ttft"
+                            }
+                            
+                            LatencyMetricService.record_latency(
+                                db=db,
+                                endpoint="enhanced-chat",
+                                latency_ms=ttft_ms,
+                                user_id=payload.user_id,
+                                request_id=request_id,
+                                latency_metadata=ttft_metadata,
+                                type_category="response_start"
+                            )
+                            
+                            logger.info(f"Recorded TTFT: {ttft_ms}ms for enhanced-chat")
+                            first_token_recorded = True
+                            
+                        except Exception as ttft_error:
+                            logger.warning(f"Failed to record TTFT latency: {ttft_error}")
+                            first_token_recorded = True  # Don't try again
+                    
                     # Yield each token/chunk immediately for real-time streaming
                     yield f"data: {json.dumps({'type': 'token', 'content': content, 'timestamp': time.time()})}\n\n"
                     
         except Exception as stream_error:
             logger.error(f"Streaming generation error: {stream_error}")
             yield f"data: {json.dumps({'type': 'error', 'message': 'Streaming failed, falling back to regular generation', 'timestamp': time.time()})}\n\n"
+            
+            # Record TTFT for fallback case if not already recorded
+            if not first_token_recorded:
+                fallback_start_time = time.time()
+                ttft_ms = int((fallback_start_time - start_time) * 1000)
+                
+                try:
+                    latency_tracker.record_latency("enhanced-chat-ttft", ttft_ms, payload.user_id)
+                    
+                    ttft_metadata = {
+                        "complexity_level": payload.complexity_level,
+                        "from_cache": False,
+                        "confidence": confidence,
+                        "documents_retrieved": len(relevant_docs),
+                        "source": "fallback_ttft"
+                    }
+                    
+                    LatencyMetricService.record_latency(
+                        db=db,
+                        endpoint="enhanced-chat",
+                        latency_ms=ttft_ms,
+                        user_id=payload.user_id,
+                        request_id=request_id,
+                        latency_metadata=ttft_metadata,
+                        type_category="response_start"
+                    )
+                    
+                    logger.info(f"Recorded fallback TTFT: {ttft_ms}ms for enhanced-chat")
+                    first_token_recorded = True
+                    
+                except Exception as ttft_error:
+                    logger.warning(f"Failed to record fallback TTFT latency: {ttft_error}")
             
             # Fallback to regular generation if streaming fails
             response = await llm.ainvoke([
@@ -221,24 +338,10 @@ async def stream_response_generator(
         end_time = time.time()
         response_time = int((end_time - start_time) * 1000)
         
-        citations = extract_citations(relevant_docs)
-        formatted_sources = []
-        seen_sources = set()
-        
-        for doc in relevant_docs:
-            source_name = doc.metadata.get('source_file', 'Unknown')
-            if source_name not in seen_sources:
-                formatted_sources.append({
-                    "source": source_name,
-                    "page": doc.metadata.get('page', 'N/A'),
-                    "document_type": doc.metadata.get('document_type', 'other'),
-                    "relevance_snippet": doc.page_content[:200] + "..."
-                })
-                seen_sources.add(source_name)
+        citations = extract_citations_enhanced(relevant_docs, accumulated_response)
         
         final_data = {
             "answer": accumulated_response,
-            "source_documents": formatted_sources,
             "confidence": confidence,
             "tools_used": [],
             "citations": citations,
@@ -247,7 +350,7 @@ async def stream_response_generator(
             "query_analysis": query_analysis,
             "retrieval_stats": {
                 "documents_retrieved": len(relevant_docs),
-                "unique_sources": len(formatted_sources),
+                "unique_sources": len(set(doc.metadata.get('source_file', 'Unknown') for doc in relevant_docs)),
                 "average_relevance": confidence
             },
             "from_cache": False
@@ -256,27 +359,12 @@ async def stream_response_generator(
         # Cache the response
         cache.set_cached_query(cache_key, final_data, expire=1800)
         
-        # Record latency
+        # Record latency to in-memory tracker
         try:
             latency_tracker.record_latency("enhanced-chat", response_time, payload.user_id)
             
-            metadata = {
-                "complexity_level": payload.complexity_level,
-                "from_cache": False,
-                "tools_used": 0,
-                "confidence": confidence,
-                "documents_retrieved": len(relevant_docs),
-                "source": "streaming_handler"
-            }
-            
-            LatencyMetricService.record_latency(
-                db=db,
-                endpoint="enhanced-chat",
-                latency_ms=response_time,
-                user_id=payload.user_id,
-                request_id=request_id,
-                latency_metadata=metadata
-            )
+            # Note: API latency will be recorded once at the end of the full request
+            logger.debug(f"Recorded streaming latency: {response_time}ms for enhanced-chat")
         except Exception as e:
             logger.warning(f"Failed to record streaming latency: {e}")
         
@@ -397,7 +485,10 @@ async def execute_tools_intelligently(
     context: str, 
     complexity_level: str,
     llm: ChatOpenAI,
-    confidence: float
+    confidence: float,
+    db: Session = None,
+    user_id: str = None,
+    request_id: str = None
 ) -> tuple[str, List[str]]:
     """
     Intelligently decide which tools to run and execute them in parallel
@@ -453,10 +544,20 @@ async def execute_tools_intelligently(
     enhanced_context = context + "\n\nTool Results:\n"
     tools_used = []
     
+    # Process tool results and record individual tool timings
+    successful_tools = 0
+    failed_tools = 0
+    
     for tool_result in tool_results:
+        tool_name = tool_result.get('tool_name')
+        tool_execution_time = tool_result.get('execution_time_ms', 0)
+        
+        # Note: Individual tool timing recording could be added here if needed
+        # For now, we'll track them in the aggregate
+        
         if tool_result.get('success'):
+            successful_tools += 1
             result = tool_result.get('result', {})
-            tool_name = tool_result.get('tool_name')
             tools_used.append(tool_name)
             
             if tool_name == 'fetch_legal_citations':
@@ -478,11 +579,24 @@ async def execute_tools_intelligently(
             logger.warning(f"Tool {tool_result.get('tool_name')} failed: {tool_result.get('error')}")
     
     # Generate final response with enhanced context
-    final_response = await generate_direct_response(query, enhanced_context, complexity_level, llm)
+    final_response = await generate_direct_response(
+        query, enhanced_context, complexity_level, llm, db, user_id, request_id, "post_tools"
+    )
     return final_response, tools_used
 
-async def generate_direct_response(query: str, context: str, complexity_level: str, llm: ChatOpenAI) -> str:
-    """Generate response using direct LLM call"""
+async def generate_direct_response(
+    query: str, 
+    context: str, 
+    complexity_level: str, 
+    llm: ChatOpenAI,
+    db: Session = None,
+    user_id: str = None,
+    request_id: str = None,
+    path_type: str = "direct"
+) -> str:
+    """Generate response using direct LLM call with timing recording"""
+    llm_start = time.time()
+    
     prompt = ENHANCED_LEGAL_PROMPT.format(
         complexity_level=complexity_level,
         query_analysis={},  # Not needed for direct response
@@ -493,6 +607,29 @@ async def generate_direct_response(query: str, context: str, complexity_level: s
         {"role": "system", "content": prompt},
         {"role": "user", "content": query}
     ])
+    
+    llm_time = (time.time() - llm_start) * 1000
+    
+    # Record LLM generation timing if DB session is available
+    if db and user_id:
+        try:
+            LatencyMetricService.record_latency(
+                db=db,
+                endpoint="enhanced-chat",
+                latency_ms=llm_time,
+                user_id=user_id,
+                request_id=request_id,
+                latency_metadata={
+                    "phase": "llm_generation",
+                    "model": "gpt-3.5-turbo",  # Get from LLM if possible
+                    "context_length": len(context),
+                    "prompt_tokens": len(prompt.split()),  # Rough estimate
+                    "path": path_type
+                },
+                type_category="phase_timing"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record LLM generation timing in generate_direct_response: {e}")
     
     return response.content
 
@@ -560,33 +697,15 @@ async def enhanced_chat(
             cached_response["response_time_ms"] = int((time.time() - start_time) * 1000)
             cached_response["from_cache"] = True
             
-            # Record latency for cached responses in both memory and database
+            # Record latency for cached responses in memory only
             try:
                 cache_latency = cached_response["response_time_ms"]
                 
                 # Record in memory (Redis) for real-time metrics
                 latency_tracker.record_latency("enhanced-chat-cache", cache_latency, payload.user_id)
                 
-                # Also record in database for persistent analytics
-                cache_metadata = {
-                    "complexity_level": payload.complexity_level,
-                    "from_cache": True,
-                    "tools_used": 0,
-                    "confidence": "N/A",
-                    "documents_retrieved": 0,
-                    "source": "cache_hit"
-                }
-                
-                LatencyMetricService.record_latency(
-                    db=db,
-                    endpoint="enhanced-chat",
-                    latency_ms=cache_latency,
-                    user_id=payload.user_id,
-                    request_id=request_id,
-                    latency_metadata=cache_metadata
-                )
-                
-                logger.info(f"Recorded cache hit latency: {cache_latency}ms for enhanced-chat")
+                # Note: API latency will be recorded once at the end of the full request
+                logger.debug(f"Recorded cache hit latency: {cache_latency}ms for enhanced-chat")
                 
             except Exception as e:
                 logger.warning(f"Failed to record cache latency metrics: {e}")
@@ -596,7 +715,26 @@ async def enhanced_chat(
         # Step 2: Process and analyze query
         query_start = time.time()
         query_analysis = query_processor.preprocess_query(payload.question)
-        print(f'⏱️  QUERY ANALYSIS: {(time.time() - query_start)*1000:.1f}ms')
+        query_time = (time.time() - query_start) * 1000
+        print(f'⏱️  QUERY ANALYSIS: {query_time:.1f}ms')
+        
+        # Record query analysis timing
+        try:
+            LatencyMetricService.record_latency(
+                db=db,
+                endpoint="enhanced-chat",
+                latency_ms=query_time,
+                user_id=payload.user_id,
+                request_id=request_id,
+                latency_metadata={
+                    "phase": "query_analysis",
+                    "complexity_level": payload.complexity_level,
+                    "query_length": len(payload.question)
+                },
+                type_category="phase_timing"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record query analysis timing: {e}")
 
         # Step 4: Enhanced retrieval
         retrieval_start = time.time()
@@ -612,38 +750,58 @@ async def enhanced_chat(
             # Fallback to basic retrieval - also reduced
             retriever = vectorstore.as_retriever(search_kwargs={"k": 2})  # Reduced from 3 to 2
             relevant_docs = retriever.get_relevant_documents(payload.question)
-        print(f'⏱️  DOCUMENT RETRIEVAL: {(time.time() - retrieval_start)*1000:.1f}ms')
+        
+        retrieval_time = (time.time() - retrieval_start) * 1000
+        print(f'⏱️  DOCUMENT RETRIEVAL: {retrieval_time:.1f}ms')
+        
+        # Record retrieval timing
+        try:
+            LatencyMetricService.record_latency(
+                db=db,
+                endpoint="enhanced-chat",
+                latency_ms=retrieval_time,
+                user_id=payload.user_id,
+                request_id=request_id,
+                latency_metadata={
+                    "phase": "document_retrieval",
+                    "retriever_type": "enhanced" if enhanced_retriever else "basic",
+                    "k_documents": 2,
+                    "has_filters": bool(query_analysis.get('filters', {})),
+                    "docs_found": len(relevant_docs)
+                },
+                type_category="phase_timing"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record retrieval timing: {e}")
 
         # Reranking step - optimized for speed
-        rerank_start = time.time()
-        enriched = []
-        for doc in relevant_docs[:2]:  # Only rerank top 2 for speed
-            meta = getattr(doc, "metadata", {}) or {}
-            doc_id = meta.get("id") or meta.get("source_file") or meta.get("source") or f"{meta.get('source','unknown')}:{meta.get('page','-')}"
-
-            try:
-                similiarity_score = float(getattr(doc, "score", None) or meta.get("similarity") or 0.0)
-            except Exception:
-                similiarity_score = 0.0
+        if enhanced_retriever:
+            rerank_start = time.time()
             
-            eval_score = 0
+            relevant_docs = enhanced_retriever.rerank(relevant_docs, payload.question, top_k=2, alpha=EVAL_ALPHA)
+        
+            logger.debug(f"Reranked {len(relevant_docs)} documents")  # Reduced logging
+        
+            rerank_time = (time.time() - rerank_start) * 1000
+            print(f'⏱️  RERANKING: {rerank_time:.1f}ms')
+        
+            # Record reranking timing
             try:
-                raw = cache.get(f"eval_score:{doc_id}")
-                if raw:
-                    parsed = raw if isinstance(raw, dict) else json.loads(raw)
-                    eval_score = float(parsed.get("score", 0.0))
-            except Exception:
-                logger.debug("Could not load eval_score for %s", doc_id)  # Reduced to debug level
-
-            combined = (EVAL_ALPHA * similiarity_score) + (EVAL_BETA * eval_score)
-            enriched.append((combined, doc))
-
-        enriched.sort(key=lambda x: x[0], reverse=True)
-
-        # replace relevant_docs with reranked docs
-        relevant_docs = [doc for _, doc in enriched]
-        logger.debug(f"Reranked {len(relevant_docs)} documents")  # Reduced logging
-        print(f'⏱️  RERANKING: {(time.time() - rerank_start)*1000:.1f}ms')
+                LatencyMetricService.record_latency(
+                    db=db,
+                    endpoint="enhanced-chat",
+                    latency_ms=rerank_time,
+                    user_id=payload.user_id,
+                    request_id=request_id,
+                    latency_metadata={
+                        "phase": "reranking",
+                        "alpha_weight": EVAL_ALPHA,
+                        "beta_weight": EVAL_BETA
+                    },
+                    type_category="phase_timing"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to record reranking timing: {e}")
 
         # Step 5: Calculate confidence based on retrieval quality
         confidence_start = time.time()
@@ -675,24 +833,57 @@ async def enhanced_chat(
             callbacks=[cost_callback],
             max_tokens=max_tokens,
             timeout=8,
+            client=openai_service.client
             )
         print(f'⏱️  LLM INIT: {(time.time() - llm_start)*1000:.1f}ms')
 
         generation_start = time.time()
+        tools_used = []
+        
         if confidence < 0.3:  # Reduced threshold - only use tools for very low confidence
+            tools_start = time.time()
             answer, tools_used = await execute_tools_intelligently(
                 query=payload.question,
                 context=context,
                 complexity_level=payload.complexity_level,
                 llm=llm,
-                confidence=confidence
+                confidence=confidence,
+                db=db,
+                user_id=payload.user_id,
+                request_id=request_id
             )
+            tools_time = (time.time() - tools_start) * 1000
+            
+            # Record tools execution timing
+            try:
+                LatencyMetricService.record_latency(
+                    db=db,
+                    endpoint="enhanced-chat",
+                    latency_ms=tools_time,
+                    user_id=payload.user_id,
+                    request_id=request_id,
+                    latency_metadata={
+                        "phase": "tools_execution",
+                        "tools_count": len(tools_used),
+                        "tools_used": tools_used,
+                        "confidence_threshold": 0.3,
+                        "actual_confidence": confidence
+                    },
+                    type_category="phase_timing"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to record tools timing: {e}")
+                
         else:
             # Use direct LLM with context - optimized for speed
+            llm_generation_start = time.time()
+            
             # Truncate context if too long to speed up processing
             max_context_length = 6000  # Reduced from 8000 for faster processing
+            context_truncated = False
             if len(context) > max_context_length:
                 context = context[:max_context_length] + "\n... [Context truncated for performance]"
+                context_truncated = True
                 
             prompt = ENHANCED_LEGAL_PROMPT.format(
                 complexity_level=payload.complexity_level,
@@ -712,40 +903,36 @@ async def enhanced_chat(
                 }
             ])
             answer = response.content
-            tools_used = []
+            
+            llm_generation_time = (time.time() - llm_generation_start) * 1000
+            
+            # Record LLM generation timing
+            try:
+                LatencyMetricService.record_latency(
+                    db=db,
+                    endpoint="enhanced-chat",
+                    latency_ms=llm_generation_time,
+                    user_id=payload.user_id,
+                    request_id=request_id,
+                    latency_metadata={
+                        "phase": "llm_generation",
+                        "model": model_name,
+                        "max_tokens": max_tokens,
+                        "context_length": len(context),
+                        "context_truncated": context_truncated,
+                        "prompt_tokens": len(prompt.split()),  # Rough estimate
+                        "path": "direct_llm"
+                    },
+                    type_category="phase_timing"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to record LLM generation timing: {e}")
         print(f'⏱️  LLM GENERATION: {(time.time() - generation_start)*1000:.1f}ms')
         
-        # Extract citations from documents
+        # Extract enhanced citations from documents
         citation_start = time.time()
-        citations = extract_citations(relevant_docs)
+        citations = extract_citations_enhanced(relevant_docs, answer)
         print(f'⏱️  CITATIONS: {(time.time() - citation_start)*1000:.1f}ms')
-        
-        # Format source documents (avoid duplicates)
-        formatting_start = time.time()
-        formatted_sources = []
-        seen_sources = set()
-        
-        for doc in relevant_docs:
-            source_name = doc.metadata.get('source_file', 'Unknown')
-            if source_name not in seen_sources:
-                extracted_sections = doc.metadata.get('extracted_sections', [])
-                legal_topics = doc.metadata.get('legal_topics', [])
-
-                if isinstance(extracted_sections, str):
-                    extracted_sections = [] if extracted_sections.strip() == '' else [extracted_sections]
-                if isinstance(legal_topics, str):
-                    legal_topics = [] if legal_topics.strip() == '' else [legal_topics]
-                
-                formatted_sources.append({
-                    "source": source_name,
-                    "page": doc.metadata.get('page', 'N/A'),
-                    "document_type": doc.metadata.get('document_type', 'other'),
-                    "relevance_snippet": doc.page_content[:200] + "...",
-                    "sections": extracted_sections,
-                    "legal_topics": legal_topics
-                })
-                seen_sources.add(source_name)
-        print(f'⏱️  SOURCE FORMATTING: {(time.time() - formatting_start)*1000:.1f}ms')
 
         # Step 8: Format response
         response_building_start = time.time()
@@ -759,7 +946,6 @@ async def enhanced_chat(
 
         response_data = {
             "answer": answer,
-            "source_documents": formatted_sources,
             "confidence": confidence,
             "tools_used": tools_used,
             "citations": citations,
@@ -786,26 +972,28 @@ async def enhanced_chat(
             # Record in-memory with enhanced metadata
             latency_tracker.record_latency("enhanced-chat", response_time, payload.user_id)
             
-            # Also store in database with additional metadata
+            # Record final latency metrics - this is the ONLY place we record the total request time
             metadata = {
                 "complexity_level": payload.complexity_level,
-                "from_cache": False,
+                "from_cache": response_data.get("from_cache", False),
                 "tools_used": len(tools_used),
                 "confidence": confidence,
                 "documents_retrieved": len(relevant_docs),
-                "source": "route_handler"  # Distinguish from middleware
+                "source": "final_total"  # Mark as the final total request time
             }
             
+            # Record as 'overall' type to represent the complete end-to-end request time
             LatencyMetricService.record_latency(
                 db=db,
                 endpoint="enhanced-chat",
                 latency_ms=response_time,
                 user_id=payload.user_id,
                 request_id=request_id,
-                latency_metadata=metadata
+                latency_metadata=metadata,
+                type_category="overall"  # Changed from "API" to "overall" for clarity
             )
             
-            logger.info(f"Recorded latency: {response_time}ms for enhanced-chat")
+            logger.info(f"Recorded final total latency: {response_time}ms for enhanced-chat")
             
         except Exception as e:
             logger.warning(f"Failed to record latency metrics: {e}")
@@ -897,8 +1085,11 @@ def format_context(docs: List) -> str:
     
     return "\n---\n".join(context_parts)
 
-def extract_citations(docs: List) -> List[Dict]:
-    """Extract structured citations from documents with robust metadata handling"""
+def extract_citations_enhanced(docs: List, response_text: str = "") -> List[Dict]:
+    """
+    Extract enhanced citations from documents with all necessary metadata.
+    Only includes documents that were actually referenced in the response.
+    """
     
     def _ensure_list(value):
         """Ensure a value is a list, handling ChromaDB serialization issues"""
@@ -915,15 +1106,33 @@ def extract_citations(docs: List) -> List[Dict]:
     citations = []
     seen = set()
     
-    for doc in docs:
+    for i, doc in enumerate(docs, 1):
         source = doc.metadata.get('source_file', 'Unknown')
+        
+        # Check if this document was actually referenced in the response
+        doc_reference = f"Document {i}"
+        was_cited = doc_reference in response_text if response_text else True
+        
         if source not in seen:
+            extracted_sections = doc.metadata.get('extracted_sections', [])
+            legal_topics = doc.metadata.get('legal_topics', [])
+            
+            # Ensure proper list formatting
+            if isinstance(extracted_sections, str):
+                extracted_sections = [] if extracted_sections.strip() == '' else [extracted_sections]
+            if isinstance(legal_topics, str):
+                legal_topics = [] if legal_topics.strip() == '' else [legal_topics]
+            
             citation = {
                 "source": source,
-                "type": doc.metadata.get('document_type', 'legal_document'),
-                "sections": _ensure_list(doc.metadata.get('extracted_sections', [])),
+                "page": doc.metadata.get('page', 'N/A'),
+                "document_type": doc.metadata.get('document_type', 'legal_document'),
+                "sections": _ensure_list(extracted_sections),
                 "acts": _ensure_list(doc.metadata.get('extracted_acts', [])),
-                "page": doc.metadata.get('page', 'N/A')
+                "legal_topics": legal_topics,
+                "relevance_snippet": doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content,
+                "was_cited": was_cited,
+                "document_number": i
             }
             citations.append(citation)
             seen.add(source)
