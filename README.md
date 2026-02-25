@@ -31,6 +31,11 @@ The AI Legal Assistant is a comprehensive solution that combines advanced natura
 
 ![AI Legal Assistant Demo](./docs/images/AILegalAssistant.gif)
 
+#### Single Question Evaluation
+
+![Single Question RAG Evaluation](./single_evaluation.gif)
+_Real-time evaluation of individual questions showing accuracy, relevance, and groundedness metrics_
+
 ### Key Capabilities
 
 - **Document Analysis**: Upload and analyze legal documents (PDFs, text files)
@@ -55,14 +60,12 @@ The AI Legal Assistant is a comprehensive solution that combines advanced natura
 - **Authentication System**: JWT-based user authentication
 - **Rate Limiting**: Configurable API rate limits with Redis backing
 - **Input Validation**: Comprehensive request validation and sanitization
-- **AWS Integration**: Secure secrets management with AWS Secrets Manager
 
 ### 📊 Monitoring & Analytics
 
 - **Cost Tracking**: Real-time OpenAI API usage and cost monitoring
 - **Latency Metrics**: Detailed performance tracking with TTFT (Time to First Token)
 - **Evaluation Framework**: Built-in RAG evaluation with multiple metrics
-- **Health Monitoring**: Comprehensive health checks and logging
 
 ### 🚀 Scalable Architecture
 
@@ -70,7 +73,6 @@ The AI Legal Assistant is a comprehensive solution that combines advanced natura
 - **React Frontend**: Modern, responsive user interface
 - **Vector Database**: ChromaDB for efficient similarity search
 - **Caching Layer**: Redis for performance optimization
-- **AWS Deployment**: CloudFormation templates for production deployment
 
 ## 🏗️ Architecture
 
@@ -132,12 +134,8 @@ graph TB
 
 ### Infrastructure
 
-- **Docker** - Containerization
-- **AWS CloudFormation** - Infrastructure as Code
-- **AWS ECS** - Container orchestration
-- **AWS S3** - Document storage
-- **AWS RDS** - Managed PostgreSQL database
-- **AWS ElastiCache** - Managed Redis cache
+- **Local Development** - SQLite database for development
+- **Redis** - Local caching and rate limiting
 
 ### AI/ML Stack
 
@@ -215,19 +213,8 @@ graph TB
    # Optional - Database
    DATABASE_URL=sqlite:///./ai_legal_assistant.db
 
-   # Optional - Redis
+   # Optional - Redis (for caching)
    REDIS_URL=redis://localhost:6379
-
-   # Optional - AWS (for production)
-   AWS_ACCESS_KEY_ID=your_aws_access_key
-   AWS_SECRET_ACCESS_KEY=your_aws_secret_key
-   AWS_REGION=us-east-1
-   AWS_S3_BUCKET=your-documents-bucket
-   ```
-
-4. **Run the backend**
-   ```bash
-   uvicorn main:app --reload --host 0.0.0.0 --port 8000
    ```
 
 ### Frontend Setup
@@ -260,7 +247,6 @@ graph TB
 | `ENVIRONMENT`       | Deployment environment        | `development`            | ❌       |
 | `DATABASE_URL`      | Database connection string    | SQLite local             | ❌       |
 | `REDIS_URL`         | Redis connection string       | `redis://localhost:6379` | ❌       |
-| `AWS_REGION`        | AWS region for services       | `us-east-1`              | ❌       |
 | `LANGSMITH_API_KEY` | LangSmith tracing API key     | -                        | ❌       |
 
 ### Advanced Configuration
@@ -353,76 +339,36 @@ POST /evaluation/run
 
 ### Administration
 
-- `GET /health` - Health check
 - `POST /cache/clear` - Clear cache
 - `GET /admin/stats` - System statistics
 
 Full API documentation available at `/docs` when running the server.
 
-## 🚀 Deployment
+## � Data Persistence
 
-### AWS Production Deployment
+### Local Development Setup
 
-1. **Deploy infrastructure**
+The application uses local file storage for development:
 
-   ```bash
-   cd infrastructure
-   aws cloudformation deploy \
-     --template-file cloudformation.yml \
-     --stack-name ai-legal-assistant \
-     --parameter-overrides \
-       Environment=production \
-       DBPassword=YourSecurePassword123
-   ```
+- **Vector Database**: ChromaDB stores embeddings locally in `backend/chroma_db/`
+- **Application Database**: SQLite database for user sessions and metrics
+- **Document Storage**: Local file system in `backend/documents/`
+- **Cache**: Local Redis instance for rate limiting and caching
 
-2. **Build and deploy application**
+### Data Backup
 
-   ```bash
-   # Build Docker image
-   docker build -t ai-legal-assistant .
+To backup your local data:
 
-   # Tag for ECR
-   docker tag ai-legal-assistant:latest \
-     123456789012.dkr.ecr.us-east-1.amazonaws.com/ai-legal-assistant:latest
+```bash
+# Backup vector database
+cp -r backend/chroma_db/ backup/chroma_db_$(date +%Y%m%d)/
 
-   # Push to ECR
-   docker push 123456789012.dkr.ecr.us-east-1.amazonaws.com/ai-legal-assistant:latest
-   ```
+# Backup SQLite database
+cp backend/ai_legal_assistant.db backup/db_$(date +%Y%m%d).db
 
-### Docker Production Setup
-
-1. **Production docker-compose.yml**
-
-   ```yaml
-   version: "3.8"
-   services:
-     app:
-       image: ai-legal-assistant:latest
-       environment:
-         - ENVIRONMENT=production
-         - DATABASE_URL=postgresql://user:pass@db:5432/legal_assistant
-       depends_on:
-         - db
-         - redis
-
-     db:
-       image: postgres:15
-       environment:
-         POSTGRES_DB: legal_assistant
-         POSTGRES_USER: user
-         POSTGRES_PASSWORD: password
-
-     redis:
-       image: redis:7-alpine
-   ```
-
-### Environment-Specific Configurations
-
-| Environment | Database       | Cache       | Storage     | Monitoring             |
-| ----------- | -------------- | ----------- | ----------- | ---------------------- |
-| Development | SQLite         | Local Redis | Local files | Basic logging          |
-| Staging     | PostgreSQL     | ElastiCache | S3          | CloudWatch             |
-| Production  | RDS PostgreSQL | ElastiCache | S3          | CloudWatch + LangSmith |
+# Backup documents
+cp -r backend/documents/ backup/documents_$(date +%Y%m%d)/
+```
 
 ## 📊 Monitoring & Analytics
 
@@ -436,6 +382,9 @@ Full API documentation available at `/docs` when running the server.
 ### Evaluation Framework
 
 The system includes a comprehensive evaluation framework:
+
+![Batch Evaluation Dashboard](./batch_evaluation.png)
+_Comprehensive batch evaluation dashboard showing detailed metrics across multiple test cases_
 
 ```python
 # Run evaluation
